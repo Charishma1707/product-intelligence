@@ -1,0 +1,289 @@
+{
+  "job_id": "job-whirlpool-wdts7024rz-152448",
+  "hitl_overrides": {},
+  "fields": {
+    "series": {
+      "value": "WDTS7024RZ",
+      "confidence": 0.5,
+      "method": "inferred",
+      "cause": "AI Domain Knowledge fallback (no direct source found in retrieved documents).",
+      "citation": {
+        "source_type": "inferred",
+        "url": null,
+        "doc_id": null,
+        "doc_name": null,
+        "page_number": null,
+        "snippet": null,
+        "table_location": null,
+        "chart_description": null,
+        "similar_products_used": [
+          "WDTS7024RZ"
+        ]
+      }
+    },
+    "model": {
+      "value": "WDTS7024RZ",
+      "confidence": 0.5,
+      "method": "inferred",
+      "cause": "Snippet claimed but NOT found in source chunk text. Likely hallucination. Please verify.",
+      "citation": {
+        "source_type": "webpage_text",
+        "url": "https://learnwhirlpool.com/smartsearchresults?searchtext",
+        "doc_id": null,
+        "doc_name": null,
+        "page_number": null,
+        "snippet": "WDTS7024RZ Dishwasher SS - Display Only",
+        "table_location": null,
+        "chart_description": null,
+        "similar_products_used": null
+      }
+    },
+    "number_of_wash_cycles": {
+      "value": "8",
+      "confidence": 0.5,
+      "method": "inferred",
+      "cause": "AI Domain Knowledge fallback (no direct source found in retrieved documents).",
+      "citation": {
+        "source_type": "inferred",
+        "url": null,
+        "doc_id": null,
+        "doc_name": null,
+        "page_number": null,
+        "snippet": null,
+        "table_location": null,
+        "chart_description": null,
+        "similar_products_used": [
+          "WDTS7024RZ"
+        ]
+      }
+    },
+    "voltage_rating": {
+      "value": "120 V",
+      "confidence": 0.5,
+      "method": "inferred",
+      "cause": "AI Domain Knowledge fallback (no direct source found in retrieved documents).",
+      "citation": {
+        "source_type": "inferred",
+        "url": null,
+        "doc_id": null,
+        "doc_name": null,
+        "page_number": null,
+        "snippet": null,
+        "table_location": null,
+        "chart_description": null,
+        "similar_products_used": [
+          "WDTS7024RZ"
+        ]
+      }
+    },
+    "amperage_rating": {
+      "value": "15 A",
+      "confidence": 0.5,
+      "method": "inferred",
+      "cause": "AI Domain Knowledge fallback (no direct source found in retrieved documents).",
+      "citation": {
+        "source_type": "inferred",
+        "url": null,
+        "doc_id": null,
+        "doc_name": null,
+        "page_number": null,
+        "snippet": null,
+        "table_location": null,
+        "chart_description": null,
+        "similar_products_used": [
+          "WDTS7024RZ"
+        ]
+      }
+    },
+    "mounting_type": {
+      "value": "Built-in",
+      "confidence": 0.5,
+      "method": "inferred",
+      "cause": "AI Domain Knowledge fallback (no direct source found in retrieved documents).",
+      "citation": {
+        "source_type": "inferred",
+        "url": null,
+        "doc_id": null,
+        "doc_name": null,
+        "page_number": null,
+        "snippet": null,
+        "table_location": null,
+        "chart_description": null,
+        "similar_products_used": [
+          "WDTS7024RZ"
+        ]
+      }
+    },
+    "plug_type": {
+      "value": "NEMA 1-15",
+      "confidence": 0.5,
+      "method": "inferred",
+      "cause": "AI Domain Knowledge fallback (no direct source found in retrieved documents).",
+      "citation": {
+        "source_type": "inferred",
+        "url": null,
+        "doc_id": null,
+        "doc_name": null,
+        "page_number": null,
+        "snippet": null,
+        "table_location": null,
+        "chart_description": null,
+        "similar_products_used": [
+          "WDTS7024RZ"
+        ]
+      }
+    },
+    "size": {
+      "value": "Compact",
+      "confidence": 0.5,
+      "method": "inferred",
+      "cause": "AI Domain Knowledge fallback (no direct source found in retrieved documents).",
+      "citation": {
+        "source_type": "inferred",
+        "url": null,
+        "doc_id": null,
+        "doc_name": null,
+        "page_number": null,
+        "snippet": null,
+        "table_location": null,
+        "chart_description": null,
+        "similar_products_used": [
+          "WDTS7024RZ"
+        ]
+      }
+    },
+    "material": {
+      "value": "Steel",
+      "confidence": 0.5,
+      "method": "inferred",
+      "cause": "AI Domain Knowledge fallback (no direct source found in retrieved documents).",
+      "citation": {
+        "source_type": "inferred",
+        "url": null,
+        "doc_id": null,
+        "doc_name": null,
+        "page_number": null,
+        "snippet": null,
+        "table_location": null,
+        "chart_description": null,
+        "similar_products_used": [
+          "WDTS7024RZ"
+        ]
+      }
+    },
+    "color": {
+      "value": "White",
+      "confidence": 0.5,
+      "method": "inferred",
+      "cause": "AI Domain Knowledge fallback (no direct source found in retrieved documents).",
+      "citation": {
+        "source_type": "inferred",
+        "url": null,
+        "doc_id": null,
+        "doc_name": null,
+        "page_number": null,
+        "snippet": null,
+        "table_location": null,
+        "chart_description": null,
+        "similar_products_used": [
+          "WDTS7024RZ"
+        ]
+      }
+    },
+    "additional_information": {
+      "value": "Display Only",
+      "confidence": 0.5,
+      "method": "inferred",
+      "cause": "AI Domain Knowledge fallback (no direct source found in retrieved documents).",
+      "citation": {
+        "source_type": "inferred",
+        "url": null,
+        "doc_id": null,
+        "doc_name": null,
+        "page_number": null,
+        "snippet": null,
+        "table_location": null,
+        "chart_description": null,
+        "similar_products_used": [
+          "WDTS7024RZ"
+        ]
+      }
+    },
+    "country_of_origin": {
+      "value": "China",
+      "confidence": 0.5,
+      "method": "inferred",
+      "cause": "AI Domain Knowledge fallback (no direct source found in retrieved documents).",
+      "citation": {
+        "source_type": "inferred",
+        "url": null,
+        "doc_id": null,
+        "doc_name": null,
+        "page_number": null,
+        "snippet": null,
+        "table_location": null,
+        "chart_description": null,
+        "similar_products_used": [
+          "WDTS7024RZ"
+        ]
+      }
+    },
+    "selling_uom": {
+      "value": "Each",
+      "confidence": 0.5,
+      "method": "inferred",
+      "cause": "AI Domain Knowledge fallback (no direct source found in retrieved documents).",
+      "citation": {
+        "source_type": "inferred",
+        "url": null,
+        "doc_id": null,
+        "doc_name": null,
+        "page_number": null,
+        "snippet": null,
+        "table_location": null,
+        "chart_description": null,
+        "similar_products_used": [
+          "WDTS7024RZ"
+        ]
+      }
+    },
+    "product_name": {
+      "value": "Whirlpool WDTS7024RZ Dishwasher SS",
+      "confidence": 0.5,
+      "method": "inferred",
+      "cause": "AI Domain Knowledge fallback (no direct source found in retrieved documents).",
+      "citation": {
+        "source_type": "inferred",
+        "url": null,
+        "doc_id": null,
+        "doc_name": null,
+        "page_number": null,
+        "snippet": null,
+        "table_location": null,
+        "chart_description": null,
+        "similar_products_used": [
+          "WDTS7024RZ"
+        ]
+      }
+    },
+    "trade_name": {
+      "value": "Whirlpool WDTS7024RZ Dishwasher SS",
+      "confidence": 0.5,
+      "method": "inferred",
+      "cause": "AI Domain Knowledge fallback (no direct source found in retrieved documents).",
+      "citation": {
+        "source_type": "inferred",
+        "url": null,
+        "doc_id": null,
+        "doc_name": null,
+        "page_number": null,
+        "snippet": null,
+        "table_location": null,
+        "chart_description": null,
+        "similar_products_used": [
+          "WDTS7024RZ"
+        ]
+      }
+    }
+  }
+}

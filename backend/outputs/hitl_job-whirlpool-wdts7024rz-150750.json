@@ -1,0 +1,146 @@
+{
+  "job_id": "job-whirlpool-wdts7024rz-150750",
+  "hitl_overrides": {
+    "voltage_rating": "yes",
+    "amperage_rating": "yes",
+    "material": "yes"
+  },
+  "fields": {
+    "model": {
+      "value": "WDTS7024RZ",
+      "confidence": 0.9,
+      "method": "extracted",
+      "cause": "Directly read from document text.",
+      "citation": {
+        "source_type": "webpage_text",
+        "url": "https://learnwhirlpool.com/smartsearchresults?searchtext",
+        "doc_id": null,
+        "doc_name": null,
+        "page_number": null,
+        "snippet": null,
+        "table_location": null,
+        "chart_description": null,
+        "similar_products_used": null
+      }
+    },
+    "voltage_rating": {
+      "value": "yes",
+      "confidence": 1.0,
+      "method": "human_verified",
+      "cause": "AI Domain Knowledge fallback (no direct source found in retrieved documents).",
+      "citation": {
+        "source_type": "inferred",
+        "url": null,
+        "doc_id": null,
+        "doc_name": null,
+        "page_number": null,
+        "snippet": null,
+        "table_location": null,
+        "chart_description": null,
+        "similar_products_used": []
+      }
+    },
+    "amperage_rating": {
+      "value": "yes",
+      "confidence": 1.0,
+      "method": "human_verified",
+      "cause": "AI Domain Knowledge fallback (no direct source found in retrieved documents).",
+      "citation": {
+        "source_type": "inferred",
+        "url": null,
+        "doc_id": null,
+        "doc_name": null,
+        "page_number": null,
+        "snippet": null,
+        "table_location": null,
+        "chart_description": null,
+        "similar_products_used": []
+      }
+    },
+    "mounting_type": {
+      "value": "Built-In",
+      "confidence": 0.9,
+      "method": "extracted",
+      "cause": "Directly read from document text.",
+      "citation": {
+        "source_type": "webpage_text",
+        "url": "https://learnwhirlpool.com/smartsearchresults?searchtext",
+        "doc_id": null,
+        "doc_name": null,
+        "page_number": null,
+        "snippet": null,
+        "table_location": null,
+        "chart_description": null,
+        "similar_products_used": null
+      }
+    },
+    "material": {
+      "value": "yes",
+      "confidence": 1.0,
+      "method": "human_verified",
+      "cause": "AI Domain Knowledge fallback (no direct source found in retrieved documents).",
+      "citation": {
+        "source_type": "inferred",
+        "url": null,
+        "doc_id": null,
+        "doc_name": null,
+        "page_number": null,
+        "snippet": null,
+        "table_location": null,
+        "chart_description": null,
+        "similar_products_used": []
+      }
+    },
+    "color": {
+      "value": "Stainless Steel",
+      "confidence": 0.9,
+      "method": "extracted",
+      "cause": "Directly read from document text.",
+      "citation": {
+        "source_type": "webpage_text",
+        "url": "https://learnwhirlpool.com/smartsearchresults?searchtext",
+        "doc_id": null,
+        "doc_name": null,
+        "page_number": null,
+        "snippet": null,
+        "table_location": null,
+        "chart_description": null,
+        "similar_products_used": null
+      }
+    },
+    "additional_information": {
+      "value": "Display Only",
+      "confidence": 0.9,
+      "method": "extracted",
+      "cause": "Directly read from document text.",
+      "citation": {
+        "source_type": "webpage_text",
+        "url": "https://learnwhirlpool.com/smartsearchresults?searchtext",
+        "doc_id": null,
+        "doc_name": null,
+        "page_number": null,
+        "snippet": null,
+        "table_location": null,
+        "chart_description": null,
+        "similar_products_used": null
+      }
+    },
+    "product_name": {
+      "value": "WDTS7024RZ Dishwasher SS - Display Only",
+      "confidence": 0.9,
+      "method": "extracted",
+      "cause": "Directly read from document text.",
+      "citation": {
+        "source_type": "webpage_text",
+        "url": "https://learnwhirlpool.com/smartsearchresults?searchtext",
+        "doc_id": null,
+        "doc_name": null,
+        "page_number": null,
+        "snippet": null,
+        "table_location": null,
+        "chart_description": null,
+        "similar_products_used": null
+      }
+    }
+  }
+}
