@@ -636,6 +636,53 @@ def _ensure_series_first(attrs: list[str]) -> list[str]:
     return ["Series"] + result
 
 
+# ---------------------------------------------------------------------------
+# VARIANT-SPECIFIC vs SERIES-SHARED attribute classification
+#
+# VARIANT_SPECIFIC: attributes that typically differ between sibling MPNs
+#   in the same product family (e.g. different sizes, voltages, current ratings).
+#   These MUST be re-extracted per MPN — NEVER blindly propagated.
+#
+# Everything else is considered SERIES_SHARED (safe to propagate from the
+#   representative item to siblings in the same series).
+# ---------------------------------------------------------------------------
+
+VARIANT_SPECIFIC_FIELDS: frozenset[str] = frozenset({
+    # Identity
+    "mpn", "model", "alternate_part_number",
+    # Dimensions (differ by size variant)
+    "size", "length", "width", "height", "depth", "depth_with_door_open",
+    "disc_diameter", "blade_diameter", "bore_diameter", "outer_diameter",
+    "thread_size", "pipe_size",
+    # Electrical ratings (differ by variant)
+    "voltage_rating", "amperage_rating", "current_rating", "rated_current",
+    "coil_voltage", "wattage", "power_rating",
+    # Capacity / Performance
+    "capacity", "flow_rate", "max_speed", "spin_speed", "lumen_output",
+    "sensing_distance",
+    # Abrasive specifics
+    "grit", "quantity_per_pack", "thickness",
+    # Weight / Volume
+    "weight", "volume",
+    # Prices (always MPN-specific)
+    "list_price", "upc", "ean", "gtin",
+    # Noise / Sound (can differ by variant)
+    "sound_level",
+    # Heights (can differ by model)
+    "minimum_height", "maximum_height",
+})
+
+
+def get_variant_specific_fields() -> frozenset[str]:
+    """Return the set of fields that are variant-specific and must not be propagated."""
+    return VARIANT_SPECIFIC_FIELDS
+
+
+def is_series_shared(field_name: str) -> bool:
+    """Return True if this field is safe to propagate from a representative sibling."""
+    return field_name.lower().replace(" ", "_") not in VARIANT_SPECIFIC_FIELDS
+
+
 if __name__ == "__main__":
     # Quick self-test
     cp, us = lookup_taxonomy("sanding belt")

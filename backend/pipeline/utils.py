@@ -194,13 +194,48 @@ def generate_with_retry(
 ) -> str:
     """
     Primary LLM entry point.  Priority: Groq → Gemini → Ollama.
+
+    Groq is tried first (fast, free cloud tier).
+    Gemini is fallback if Groq quota hit.
+    Ollama (local) is last resort — slower but always available.
     task_type is kept for API compat but no longer changes priority.
     """
-    def _try_ollama():
-        if not _ollama_available():
-            return None
+    last_error: Exception | None = None
+
+    # ── 1. Try Groq (primary — fast, free cloud) ─────────────────────────────
+    groq_key = os.getenv("GROQ_API_KEY", "")
+    if groq_key and not (_groq_quota_exhausted and time.time() < _groq_quota_reset_time):
         try:
-            logger.info("[LLM] Using Ollama (%s) on GPU — primary", _OLLAMA_MODEL)
+            logger.info("[LLM] Using Groq (%s) — primary", _GROQ_MODEL)
+            result = _call_groq(messages, response_format=response_format, temperature=temperature)
+            if response_format and response_format.get("type") == "json_object":
+                text = _clean_json(result)
+                json.loads(text)  # validate
+                return text
+            return result
+        except Exception as e:
+            last_error = e
+            logger.warning("[LLM] Groq failed: %s — trying Gemini", e)
+
+    # ── 2. Try Gemini (secondary) ─────────────────────────────────────────────
+    gemini_key = os.getenv("GEMINI_API_KEY", "")
+    if gemini_key and not (_gemini_quota_exhausted and time.time() < _gemini_quota_reset_time):
+        try:
+            logger.info("[LLM] Using Gemini (%s) — secondary", _GEMINI_MODEL)
+            result = _call_gemini(messages, response_format=response_format, temperature=temperature)
+            if response_format and response_format.get("type") == "json_object":
+                text = _clean_json(result)
+                json.loads(text)  # validate
+                return text
+            return result
+        except Exception as e:
+            last_error = e
+            logger.warning("[LLM] Gemini failed: %s — trying Ollama", e)
+
+    # ── 3. Try Ollama (last resort — local GPU) ───────────────────────────────
+    if _ollama_available():
+        try:
+            logger.info("[LLM] Using Ollama (%s) on GPU — last resort", _OLLAMA_MODEL)
             result = _call_ollama(messages, response_format=response_format, temperature=temperature)
             if response_format and response_format.get("type") == "json_object":
                 text = _clean_json(result)
@@ -208,14 +243,10 @@ def generate_with_retry(
                 return text
             return result
         except Exception as e:
-            logger.warning("[LLM] Ollama failed (%s)", e)
-        return None
+            last_error = e
+            logger.warning("[LLM] Ollama failed: %s", e)
 
-    res = _try_ollama()
-    if res is not None:
-        return res
-
-    raise RuntimeError("No LLM backend available (Ollama failed)")
+    raise RuntimeError(f"No LLM backend available. Last error: {last_error}")
 
 
 def parse_json_response(text: str) -> dict:

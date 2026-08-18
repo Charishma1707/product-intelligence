@@ -47,6 +47,61 @@ _UNIVERSAL_FIELDS = [
 # Manufacturer name cleaner
 # ---------------------------------------------------------------------------
 
+# ---------------------------------------------------------------------------
+# Static distributor → true OEM brand map
+# ---------------------------------------------------------------------------
+
+# When Part_Manuf is a distributor code, this maps the distributor to the real OEM
+# for products typically sourced from that distributor. Extend as needed.
+_DISTRIBUTOR_TO_OEM: dict[str, str] = {
+    # Common appliance distributors
+    "appliance dealers cooperative": "Frigidaire",  # APPDE = distributor for Frigidaire/Electrolux
+    "appde": "Frigidaire",
+    # Industrial distributors — brand is inferred from description, not hardcoded
+    "jam industrial supply": None,   # brand extracted from description
+    "fastenal": None,
+    "grainger": None,
+    "zoro": None,
+    "mcmaster": None,
+    "motion industries": None,
+}
+
+# Known brand aliases / normalizations (brand as found → official name)
+_BRAND_NORMALIZATIONS: dict[str, str] = {
+    "frigidaire": "Frigidaire",
+    "whirlpool": "Whirlpool",
+    "ge": "GE Appliances",
+    "ge appliances": "GE Appliances",
+    "bosch": "Bosch",
+    "siemens": "Siemens",
+    "3m": "3M",
+    "freud": "Freud",
+    "diablo": "Diablo",
+    "dewalt": "DEWALT",
+    "milwaukee": "Milwaukee Tool",
+    "makita": "Makita",
+    "stanley": "Stanley",
+    "norton": "Norton Abrasives",
+    "moen": "Moen",
+    "delta": "Delta Faucet",
+    "kohler": "Kohler",
+    "american standard": "American Standard",
+    "rheem": "Rheem",
+    "lennox": "Lennox",
+    "carrier": "Carrier",
+    "honeywell": "Honeywell",
+    "eaton": "Eaton",
+    "schneider": "Schneider Electric",
+    "abb": "ABB",
+    "allen-bradley": "Allen-Bradley",
+    "rockwell": "Rockwell Automation",
+    "skf": "SKF",
+    "nsk": "NSK",
+    "fag": "FAG",
+    "timken": "Timken",
+}
+
+
 def _clean_manufacturer(raw: str) -> str:
     """
     Clean the Part_Manuf field into a proper manufacturer name.
@@ -60,27 +115,77 @@ def _clean_manufacturer(raw: str) -> str:
     clean = re.sub(r"\s*\([^)]*\)\s*$", "", raw.strip()).strip()
     return clean
 
-def _resolve_true_brand(clean_manuf: str, description: str) -> str:
+
+def _is_likely_mpn(token: str) -> bool:
+    """Heuristic: True if token looks like an MPN (alphanumeric mix, often with digits)."""
+    if not token:
+        return False
+    # MPNs typically: 4+ chars, contain at least one digit, may have special chars
+    has_digit = any(c.isdigit() for c in token)
+    has_alpha = any(c.isalpha() for c in token)
+    is_mixed = has_digit and has_alpha and len(token) >= 4
+    # Also flag pure uppercase alphabetic short codes like "APPDE"
+    is_pure_upper_code = token.isupper() and len(token) <= 8 and not " " in token
+    return is_mixed or is_pure_upper_code
+
+
+def _resolve_true_brand(clean_manuf: str, description: str, mpn: str = "") -> str:
     """
-    Heuristic to find the true brand if Part_Manuf is actually a distributor.
-    Rule: if the description mentions a known brand or different company name,
-    and Part_Manuf looks like a distributor, use the first word(s) of the desc.
+    Heuristic to find the true OEM brand if Part_Manuf is actually a distributor.
+
+    Strategy:
+    1. Check static distributor→OEM map first (most reliable).
+    2. If no static match, scan description for known brand names.
+    3. If no brand found in description, avoid using MPN as brand.
     """
     if not clean_manuf:
         return ""
-        
+
     lower_manuf = clean_manuf.lower()
-    distributor_keywords = ["supply", "industrial", "dealer", "distributor", "cooperative", "wholesale"]
-    
+
+    # ── Step 1: Static lookup ───────────────────────────────────────────────
+    for dist_key, oem in _DISTRIBUTOR_TO_OEM.items():
+        if dist_key in lower_manuf:
+            if oem:
+                logger.info("[BrandResolver] Static map: '%s' → '%s'", clean_manuf, oem)
+                return oem
+            # oem is None → need to extract from description
+            break
+
+    # ── Step 2: Check if this looks like a distributor at all ──────────────
+    distributor_keywords = ["supply", "industrial", "dealer", "distributor",
+                            "cooperative", "wholesale", "corporation", "company",
+                            "trading", "sales", "group", "holdings", "enterprises"]
     is_distributor = any(k in lower_manuf for k in distributor_keywords)
-    
-    if is_distributor and description:
-        # Grab the first 1-2 words of the description as the likely brand
-        first_word = description.split()[0] if description else ""
-        # Common brands that are single words
-        if first_word.isalnum():
-            return first_word
-            
+
+    # ── Step 3: Scan description for a known brand name ────────────────────
+    if description:
+        desc_lower = description.lower()
+        # Check known brand normalizations
+        for brand_key, brand_val in _BRAND_NORMALIZATIONS.items():
+            if brand_key in desc_lower:
+                logger.info("[BrandResolver] Brand found in description: '%s'", brand_val)
+                return brand_val
+
+        if is_distributor:
+            # Grab first word of description — but ONLY if it's not the MPN
+            words = description.split()
+            if words:
+                first_word = words[0]
+                if first_word.upper() == mpn.upper() or _is_likely_mpn(first_word):
+                    logger.info("[BrandResolver] First word is MPN/code, skipping: '%s'", first_word)
+                    # Try second word
+                    if len(words) > 1 and not _is_likely_mpn(words[1]):
+                        candidate = words[1]
+                        if candidate.isalpha() and len(candidate) > 2:
+                            logger.info("[BrandResolver] Using second word as brand: '%s'", candidate)
+                            return candidate
+                else:
+                    # First word is a real word, likely a brand
+                    if first_word.replace("-", "").isalpha() and len(first_word) > 2:
+                        logger.info("[BrandResolver] Using first word as brand: '%s'", first_word)
+                        return first_word
+
     return clean_manuf
 
 
@@ -95,6 +200,8 @@ def node_interpret(state: PipelineState) -> dict:
     # ── Identity Chain Step 1 & 2: Clean and resolve true brand ──
     raw_manuf = state.get("input_part_manuf") or state.get("brand") or ""
     clean_manuf = _clean_manufacturer(raw_manuf)
+    mpn = state["mpn"]
+    description = state.get("description", "")
     
     # If the provided brand is unbranded/placeholder, or if we suspect it's a distributor
     current_brand = state["brand"]
@@ -103,7 +210,7 @@ def node_interpret(state: PipelineState) -> dict:
     if current_brand in ("-- Unbranded --", "", "-- No Unilog Brand --") or (
         clean_manuf and current_brand == raw_manuf
     ):
-        resolved = _resolve_true_brand(clean_manuf, state.get("description", ""))
+        resolved = _resolve_true_brand(clean_manuf, description, mpn=mpn)
         if resolved:
             true_brand = resolved
 

@@ -266,6 +266,56 @@ Return a SINGLE JSON object where every key is the snake_case field name:
 
 
 # ---------------------------------------------------------------------------
+# Targeted document re-search for missing fields
+# ---------------------------------------------------------------------------
+
+def _targeted_extraction(
+    brand: str, mpn: str, description: str, category: str,
+    missing_fields: list[str], chunks: list[dict]
+) -> dict[str, dict]:
+    """Targeted second pass scanning the documents specifically for still-missing fields."""
+    if not missing_fields or not chunks:
+        return {}
+
+    combined_context = _build_context_text(chunks, max_chars=7000)
+    
+    prompt = f"""Product: {brand} {mpn}
+Category: {category}
+Description: {description}
+
+The following fields were missed in the initial extraction pass. 
+Specifically look for these missing attributes in the document:
+{json.dumps(missing_fields, indent=2)}
+
+Documentation:
+---
+{combined_context}
+---
+
+TASK: Perform a highly targeted search for ONLY these missing fields.
+- If found, provide the value and the exact verbatim snippet.
+- If truly not mentioned in the documentation, return null.
+- Do NOT guess or invent values here; this is strict document extraction.
+
+Return JSON:
+{{
+  "field_name": {{"value": "...", "snippet": "..."}}
+}}"""
+
+    messages = [
+        {"role": "system", "content": _SYSTEM_PROMPT},
+        {"role": "user", "content": prompt},
+    ]
+    task_type = "pdf" if _detect_source_type(chunks).startswith("pdf") else "normal"
+    try:
+        raw = generate_with_retry(messages=messages, response_format={"type": "json_object"}, temperature=0.1, task_type=task_type)
+        return parse_json_response(raw)
+    except Exception as e:
+        logger.warning("[Extractor] Targeted extraction failed: %s", e)
+        return {}
+
+
+# ---------------------------------------------------------------------------
 # Inference for missing fields
 # ---------------------------------------------------------------------------
 
@@ -496,6 +546,22 @@ def extract(
 
         except Exception as e:
             logger.error("[Extractor] Batched extraction failed: %s", e)
+
+    # ── Pass 1.5: Targeted document re-search for still-missing fields ──────
+    missing_after_batch = [f for f, r in results.items() if r.value is None]
+    if missing_after_batch and chunks:
+        logger.info("[Extractor] Running targeted document re-search for %d missing fields", len(missing_after_batch))
+        targeted = _targeted_extraction(brand, mpn, description, category, missing_after_batch, chunks)
+        for fname in missing_after_batch:
+            if fname in targeted:
+                fdata = targeted[fname]
+                val = fdata.get("value") if isinstance(fdata, dict) else fdata
+                if val is not None and str(val).strip() not in ("null", "None", "", "N/A"):
+                    results[fname].value = val
+                    results[fname].source_type = _detect_source_type(chunks)
+                    results[fname].url = first_url
+                    if isinstance(fdata, dict):
+                        results[fname].snippet = fdata.get("snippet")
 
     # ── Pass 2: Inference for still-missing fields ───────────────────────────
     still_missing = [f for f, r in results.items() if r.value is None]

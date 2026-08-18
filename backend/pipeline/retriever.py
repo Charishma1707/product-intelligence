@@ -119,12 +119,17 @@ def _store_chunks(product_id: str, chunks: list[dict]):
     metadatas = []
 
     for i, c in enumerate(chunks):
+        # Compute a content hash to avoid re-embedding identical documents
+        text_content = c.get("text") or "image_only"
+        doc_hash = hashlib.sha256(text_content.encode("utf-8", errors="replace")).hexdigest()[:16]
+
         ids.append(f"{product_id}_chunk_{i}_{uuid.uuid4().hex[:8]}")
-        documents.append(c.get("text") or "image_only")
+        documents.append(text_content)
 
         meta = {
             "product_id": product_id,
             "source_type": c.get("source_type", "unknown"),
+            "doc_hash": doc_hash,
         }
         if c.get("url"): meta["url"] = c.get("url")
         if c.get("doc_id"): meta["doc_id"] = c.get("doc_id")
@@ -407,6 +412,24 @@ def _verify_url_alive(url: str, timeout: int = 5) -> bool:
             allow_redirects=True,
         )
         return r.status_code < 400
+    except Exception:
+        return False
+
+
+# ---------------------------------------------------------------------------
+# MPN verification on fetched pages
+# ---------------------------------------------------------------------------
+
+def _verify_mpn_on_page(html_bytes: bytes, mpn: str) -> bool:
+    """
+    Scan the fetched HTML for the exact MPN string (case-insensitive).
+    Returns True if the MPN is found in the page content.
+    """
+    if not html_bytes or not mpn:
+        return False
+    try:
+        html_str = html_bytes.decode("utf-8", errors="replace")
+        return mpn.upper() in html_str.upper()
     except Exception:
         return False
 
@@ -720,6 +743,7 @@ def retrieve(brand: str, mpn: str, description: str, category: str) -> dict:
         )
 
         # Fetch and process each URL
+        mpn_verified_url: str | None = None  # URL where MPN was confirmed present
         for url in all_urls:
             time.sleep(0.1)
             try:
@@ -739,8 +763,22 @@ def retrieve(brand: str, mpn: str, description: str, category: str) -> dict:
                     timeout=_REQUEST_TIMEOUT,
                     stream=True
                 )
+                raw_resp.raise_for_status()
                 content_type = raw_resp.headers.get("Content-Type", "").lower()
                 raw_bytes = raw_resp.content
+
+                # ── MPN Verification for the primary MFR URL ─────────────────────
+                # Only check HTML pages (not PDFs) that are the candidate mfr_url
+                if url == mfr_url and "html" in content_type and not is_pdf:
+                    if _verify_mpn_on_page(raw_bytes, mpn):
+                        mpn_verified_url = url
+                        logger.info("[Retriever] MPN '%s' VERIFIED on page: %s", mpn, url)
+                    else:
+                        logger.warning(
+                            "[Retriever] MPN '%s' NOT FOUND on page %s — may be wrong product page",
+                            mpn, url
+                        )
+                        # Don't discard — still fetch the page, but log the warning
 
                 # Extract digital assets from HTML — MANUFACTURER DOMAIN ONLY
                 # Use resolved_mfr_domain from oracle for accurate tagging
@@ -789,9 +827,10 @@ def retrieve(brand: str, mpn: str, description: str, category: str) -> dict:
                     )
                     for c in real_chunks:
                         c["is_mfr_domain"] = is_mfr
+                        c["mpn_verified"] = (url == mpn_verified_url)
                     chunks.extend(real_chunks)
-                    logger.info("[Retriever] Got %d chunks from %s (mfr=%s)",
-                                len(real_chunks), url, is_mfr)
+                    logger.info("[Retriever] Got %d chunks from %s (mfr=%s, mpn_verified=%s)",
+                                len(real_chunks), url, is_mfr, url == mpn_verified_url)
                     if len(chunks) >= 8:
                         break
                 elif fetched_chunks:
