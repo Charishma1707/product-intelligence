@@ -54,6 +54,10 @@ A human catalog manager can then review the evidence side-by-side with the PDF s
 
 Once approved, the pipeline dynamically learns from the manager's correction.
 
+### 5. Cost-Sensitive LLM Fallback Cascade (Run Anywhere!)
+While the system is designed to run on a free, local **Ollama** instance to keep costs at $0.00, we implemented an intelligent LLM Router. 
+If the system detects that Ollama is offline (or if a judge runs this on a laptop without a GPU), the LangGraph nodes seamlessly degrade to use **Groq** or **Gemini** cloud APIs. This means the entire pipeline can be deployed and run on *any* computer, instantly.
+
 ---
 
 ## 🏗️ System Architecture (10-Node LangGraph)
@@ -87,6 +91,10 @@ cd backend
 python -m venv venv
 .\venv\Scripts\activate
 pip install -r requirements.txt
+
+# (Optional) If you don't have Ollama installed, add a Groq/Gemini key to .env
+# GROQ_API_KEY=gsk_...
+# GEMINI_API_KEY=AIzaSy...
 
 # Start the FastAPI Server (Port 8000)
 python main.py
