@@ -68,6 +68,16 @@ def node_identity(state: PipelineState) -> dict:
     
     raw_manuf = state.get("input_part_manuf") or state.get("brand") or ""
     clean_manuf = _clean_manufacturer(raw_manuf)
+    desc = state.get("description", "")
+    
+    # Extract candidate tags from description
+    candidates = {}
+    if clean_manuf:
+        candidates["manufacturer"] = {"value": clean_manuf, "source": "INPUT", "status": "CANDIDATE"}
+    if state.get("mpn"):
+        candidates["mpn"] = {"value": state.get("mpn"), "source": "INPUT", "status": "CANDIDATE"}
+        
+    logger.info("[Identity] Formulated %d input candidates with status=CANDIDATE", len(candidates))
     
     return {
         "manufacturer_name": clean_manuf, 
@@ -75,7 +85,7 @@ def node_identity(state: PipelineState) -> dict:
         "logs": logs + [{
             "timestamp": datetime.now(timezone.utc).isoformat(),
             "node": "identity",
-            "message": f"Cleaned input manufacturer: {clean_manuf}"
+            "message": f"Input Understanding: Cleaned manufacturer '{clean_manuf}' | Candidates tagged [source=INPUT, status=CANDIDATE]"
         }]
     }
 
@@ -174,6 +184,38 @@ def node_retrieve(state: PipelineState) -> dict:
                 source_urls.append(u)
 
         mpn_verified = result.get("mpn_verified", False)
+        # Determine if this was a cache hit or fresh scrape
+        all_urls_in_chunks = list({c["url"] for c in chunks if c.get("url")})
+        cache_hit = bool(chunks) and not any(c.get("source_type") == "fresh_scrape" for c in chunks)
+        retrieve_mode = "CACHE HIT (ChromaDB) – skipped web scrape" if cache_hit else "FRESH scrape via web search"
+
+        url_lines = []
+        if mfr_url:
+            url_lines.append(f"  MFR Page     : {mfr_url}")
+        if result.get("spec_sheet_url"):
+            url_lines.append(f"  Spec Sheet   : {result['spec_sheet_url']}")
+        if result.get("sds_url"):
+            url_lines.append(f"  SDS / Safety : {result['sds_url']}")
+        if result.get("manual_url"):
+            url_lines.append(f"  Manual       : {result['manual_url']}")
+        if result.get("installation_url"):
+            url_lines.append(f"  Install Guide: {result['installation_url']}")
+        if result.get("catalog_url"):
+            url_lines.append(f"  Catalog      : {result['catalog_url']}")
+        if result.get("product_image_url"):
+            url_lines.append(f"  Product Image: {result['product_image_url']}")
+        for rurl in ref_urls:
+            url_lines.append(f"  Ref URL      : {rurl}")
+        if not url_lines:
+            url_lines.append("  (no URLs resolved)")
+
+        log_msg = (
+            f"[Retrieve] {retrieve_mode}\n"
+            f"  Chunks: {len(chunks)} | MPN Verified: {'YES' if mpn_verified else 'NO'}\n"
+            + "\n".join(url_lines)
+        )
+        logger.info(log_msg)
+
         return {
             "raw_documents": chunks,
             "mfr_url": mfr_url,
@@ -192,14 +234,7 @@ def node_retrieve(state: PipelineState) -> dict:
             "logs": logs + [{
                 "timestamp": datetime.now(timezone.utc).isoformat(),
                 "node": "retrieve",
-                "message": (
-                    f"Chunks: {len(chunks)} | "
-                    f"MFR URL: {mfr_url or 'not found'} | "
-                    f"MPN Verified: {'✓ Yes' if mpn_verified else '✗ No'} | "
-                    f"Ref URLs: {len(ref_urls)} | "
-                    f"Image: {bool(result.get('product_image_url'))} | "
-                    f"Spec Sheet: {bool(result.get('spec_sheet_url'))}"
-                )
+                "message": log_msg,
             }]
         }
     except Exception as e:
@@ -611,11 +646,24 @@ def node_hitl_supervisor(state: PipelineState, corrections: dict, reviewer: str 
         state.update(node_taxonomy(state))
         state.update(node_series(state))
         state.update(node_extract(state))
+
+        # Re-populate source_urls list if mfr_url or ref_urls are present
+        mfr_url = state.get("mfr_url")
+        ref_urls = state.get("ref_urls", [])
+        source_urls = []
+        if mfr_url:
+            source_urls.append(mfr_url)
+        for u in ref_urls:
+            if u not in source_urls:
+                source_urls.append(u)
+        if source_urls:
+            state["source_urls"] = source_urls
+
         state["status"] = "needs_review_extraction"
         return state
 
     # 3. Extraction / Attribute verification -> Route to Node 4 (validate + copywrite + finalize)
-    if current_status in ("needs_review_extraction", "needs_review") or not has_copywriting:
+    if current_status in ("needs_review_extraction", "needs_review"):
         specs = state.get("specifications", {})
         brand = state.get("brand", "")
         series = state.get("series") or (specs.get("series", {}).get("value") if isinstance(specs.get("series"), dict) else getattr(specs.get("series"), "value", None))

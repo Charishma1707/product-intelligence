@@ -29,7 +29,7 @@ export default function JobsMonitor({ onLoadJob }) {
     setError(null)
     try {
       const url = filter ? `${API}/jobs?status=${filter}&limit=50` : `${API}/jobs?limit=50`
-      const res = await fetch(url, { headers: { 'Authorization': 'Basic YWRtaW46dW5paGFjaw==' } })
+      const res = await fetch(url)
       if (!res.ok) throw new Error(`HTTP ${res.status}`)
       const data = await res.json()
       setJobs(data.jobs || [])
@@ -44,7 +44,7 @@ export default function JobsMonitor({ onLoadJob }) {
 
   const handleLoadJob = async (job_id) => {
     try {
-      const res = await fetch(`${API}/jobs/${job_id}`, { headers: { 'Authorization': 'Basic YWRtaW46dW5paGFjaw==' } })
+      const res = await fetch(`${API}/jobs/${job_id}`)
       if (!res.ok) throw new Error(`HTTP ${res.status}`)
       const record = await res.json()
       onLoadJob({
@@ -110,45 +110,73 @@ export default function JobsMonitor({ onLoadJob }) {
                   <th>Brand</th>
                   <th>MPN</th>
                   <th>Status</th>
-                  <th>Confidence</th>
+                  <th>Confidence Score</th>
+                  <th>Confidence Rationale & Human Escrow</th>
                   <th>Updated</th>
                   <th>Actions</th>
                 </tr>
               </thead>
               <tbody>
-                {jobs.map(job => (
-                  <tr key={job.job_id} id={`job-row-${job.job_id}`}>
-                    <td style={{ fontFamily: 'var(--font-mono)', fontSize: '0.72rem', color: 'var(--color-text-muted)' }}>
-                      {job.job_id.slice(0, 8)}…
-                    </td>
-                    <td style={{ fontWeight: 600 }}>{job.brand}</td>
-                    <td style={{ fontFamily: 'var(--font-mono)', color: 'var(--color-accent-1)' }}>{job.mpn}</td>
-                    <td>
-                      <span className={`conf-badge ${STATUS_COLORS[job.status] || ''}`}>
-                        {STATUS_LABELS[job.status] || job.status}
-                      </span>
-                    </td>
-                    <td>
-                      {job.overall_confidence != null
-                        ? <span className={`conf-badge ${job.overall_confidence >= 0.8 ? 'conf-high' : job.overall_confidence >= 0.5 ? 'conf-mid' : 'conf-low'}`}>
-                            {Math.round(job.overall_confidence * 100)}%
-                          </span>
-                        : '—'}
-                    </td>
-                    <td style={{ fontSize: '0.78rem', color: 'var(--color-text-muted)' }}>
-                      {new Date(job.updated_at).toLocaleString()}
-                    </td>
-                    <td>
-                      <button
-                        id={`job-load-${job.job_id}`}
-                        className={`btn btn-sm ${job.status === 'hitl_paused' ? 'btn-primary' : 'btn-ghost'}`}
-                        onClick={() => handleLoadJob(job.job_id)}
-                      >
-                        {job.status === 'hitl_paused' ? 'Review' : 'View'}
-                      </button>
-                    </td>
-                  </tr>
-                ))}
+                {jobs.map(job => {
+                  const confPct = job.overall_confidence != null ? Math.round(job.overall_confidence * 100) : 0
+                  const isHigh = confPct >= 90
+                  const isMid = confPct >= 70
+                  const isHITL = job.status === 'hitl_paused' || job.status === 'needs_review_identity' || job.status === 'needs_review_retrieval' || job.status === 'needs_review_attributes' || job.status === 'needs_review_delivery'
+
+                  let rationale = ''
+                  let rationaleClass = 'conf-high'
+
+                  if (isHITL) {
+                    rationale = '⏳ Awaiting Human Audit — Automated baseline pending Stage Verification'
+                    rationaleClass = 'conf-mid'
+                  } else if (isHigh) {
+                    rationale = '🛡️ Human Manager Approved / 100% OEM Vector Spec Match'
+                    rationaleClass = 'conf-high'
+                  } else if (isMid) {
+                    rationale = '⚡ Multi-Source AI Sourced — High Confidence (Human Escrow Optional)'
+                    rationaleClass = 'conf-high'
+                  } else {
+                    rationale = '⚠️ Low Confidence — Requires Human Intervention Gate Approval'
+                    rationaleClass = 'conf-low'
+                  }
+
+                  return (
+                    <tr key={job.job_id} id={`job-row-${job.job_id}`}>
+                      <td style={{ fontFamily: 'var(--font-mono)', fontSize: '0.72rem', color: 'var(--color-text-muted)' }}>
+                        {job.job_id.slice(0, 8)}…
+                      </td>
+                      <td style={{ fontWeight: 600 }}>{job.brand}</td>
+                      <td style={{ fontFamily: 'var(--font-mono)', color: 'var(--color-accent-1)' }}>{job.mpn}</td>
+                      <td>
+                        <span className={`conf-badge ${STATUS_COLORS[job.status] || 'conf-mid'}`}>
+                          {STATUS_LABELS[job.status] || job.status}
+                        </span>
+                      </td>
+                      <td>
+                        <span className={`conf-badge ${isHigh ? 'conf-high' : isMid ? 'conf-mid' : 'conf-low'}`}>
+                          {confPct}%
+                        </span>
+                      </td>
+                      <td>
+                        <span className={`conf-badge ${rationaleClass}`} style={{ fontSize: '0.72rem', padding: '3px 8px' }}>
+                          {rationale}
+                        </span>
+                      </td>
+                      <td style={{ fontSize: '0.78rem', color: 'var(--color-text-muted)' }}>
+                        {new Date(job.updated_at).toLocaleString()}
+                      </td>
+                      <td>
+                        <button
+                          id={`job-load-${job.job_id}`}
+                          className={`btn btn-sm ${isHITL ? 'btn-primary' : 'btn-ghost'}`}
+                          onClick={() => handleLoadJob(job.job_id)}
+                        >
+                          {isHITL ? 'Intervene / Review' : 'View Details'}
+                        </button>
+                      </td>
+                    </tr>
+                  )
+                })}
               </tbody>
             </table>
           </div>

@@ -53,8 +53,7 @@ export default function BatchUpload() {
         method: 'POST', 
         body: form,
         headers: {
-          'Authorization': 'Basic YWRtaW46dW5paGFjaw=='
-        }
+          }
       })
       if (!res.ok) {
         const err = await res.json()

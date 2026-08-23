@@ -7,6 +7,7 @@ import FinalProductResponse from './components/FinalProductResponse.jsx'
 import JobsMonitor from './components/JobsMonitor.jsx'
 import PipelineTrace from './components/PipelineTrace.jsx'
 import UserGuideModal from './components/UserGuideModal.jsx'
+import ReviewQueue from './components/ReviewQueue.jsx'
 
 export default function App() {
   const [tab, setTab] = useState('single')
@@ -18,6 +19,8 @@ export default function App() {
     complete: 0,
     needs_review: 0,
     searches_avoided: 0,
+    documents_reused: 0,
+    series_hits: 0,
     unique_series_cached: 0,
     documents_cached: 0,
   })
@@ -26,8 +29,8 @@ export default function App() {
     const fetchStats = async () => {
       try {
         const [jobsRes, metricsRes] = await Promise.all([
-          fetch('/jobs?limit=500', { headers: { 'Authorization': 'Basic YWRtaW46dW5paGFjaw==' } }),
-          fetch('/metrics', { headers: { 'Authorization': 'Basic YWRtaW46dW5paGFjaw==' } }).catch(() => null)
+          fetch('/jobs?limit=500'),
+          fetch('/metrics').catch(() => null)
         ])
         let complete = 0, review = 0
         if (jobsRes && jobsRes.ok) {
@@ -42,6 +45,8 @@ export default function App() {
           complete,
           needs_review: review,
           searches_avoided: (metricsData.searches_avoided || 0) + (metricsData.series_hits || 0) * 2,
+          documents_reused: metricsData.documents_reused || 0,
+          series_hits: metricsData.series_hits || 0,
           unique_series_cached: metricsData.unique_series_cached || 0,
           documents_cached: metricsData.documents_cached || 0,
         })
@@ -104,11 +109,12 @@ export default function App() {
             >
               User Guide
             </button>
-            <span className="metric-chip blue">{stats.searches_avoided} Searches Saved</span>
-            <span className="metric-chip purple">{stats.unique_series_cached} Series Cached</span>
-            <span className="metric-chip green">{stats.complete} Enriched</span>
+            <span className="metric-chip blue">{stats.searches_avoided} Searches Avoided</span>
+            <span className="metric-chip purple">{stats.documents_reused} Docs Reused</span>
+            <span className="metric-chip purple">{stats.series_hits || stats.unique_series_cached} Series Reused</span>
+            <span className="metric-chip green">{stats.complete} Auto-Enriched</span>
             {stats.needs_review > 0 && (
-              <span className="metric-chip amber">{stats.needs_review} In Review</span>
+              <span className="metric-chip amber">{stats.needs_review} Human Review Required</span>
             )}
           </div>
 
@@ -261,33 +267,26 @@ export default function App() {
               <div>
                 <div className="hero-badge" style={{ marginBottom: 8 }}>Verification Console</div>
                 <h1 style={{ fontSize: '1.8rem', marginBottom: 6 }}>Review Station &amp; Catalog Metrics</h1>
-                <p>Interactive verification workspace for inspecting source documentation and managing taxonomy normalization.</p>
+                <p>Products flagged for human verification. Click <strong>Open in Review</strong> to inspect and approve.</p>
               </div>
               <a
-                href="http://localhost:8501"
-                target="_blank"
-                rel="noreferrer"
-                className="btn btn-primary"
+                href="http://127.0.0.1:8000/export/csv"
+                className="btn btn-success"
                 style={{ textDecoration: 'none', flexShrink: 0 }}
+                download="Unilog_Submission.csv"
               >
-                Open in Full Window
+                Export Unilog CSV
               </a>
-            </div>
-
-            <div className="guide-banner" style={{ marginBottom: 'var(--space-lg)' }}>
-              <div className="guide-banner-text">
-                The verification station below interfaces directly with the SQLite knowledge store. Review source citations side-by-side with extracted values. Confirmed corrections are immediately saved as canonical normalization aliases.
-              </div>
             </div>
 
             {/* Scalability snapshot metrics */}
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: '12px', marginBottom: 'var(--space-lg)' }}>
               {[
-                { label: 'Searches Saved', value: stats.searches_avoided, color: 'blue', desc: 'Cached web calls' },
-                { label: 'Series Cached',    value: stats.unique_series_cached, color: 'purple', desc: 'Normalized product series' },
-                { label: 'Docs Cached',      value: stats.documents_cached, color: 'green', desc: 'Deduplicated datasheets' },
-                { label: 'Enriched',         value: stats.complete, color: 'green', desc: 'Validated catalog records' },
-                { label: 'In Review',        value: stats.needs_review, color: 'amber', desc: 'Items pending confirmation' },
+                { label: 'Searches Saved',  value: stats.searches_avoided,      color: 'blue',   desc: 'Cached web calls' },
+                { label: 'Series Cached',   value: stats.unique_series_cached,   color: 'purple', desc: 'Normalized product series' },
+                { label: 'Docs Cached',     value: stats.documents_cached,       color: 'green',  desc: 'Deduplicated datasheets' },
+                { label: 'Auto-Enriched',   value: stats.complete,               color: 'green',  desc: 'Validated catalog records' },
+                { label: 'Needs Review',    value: stats.needs_review,           color: 'amber',  desc: 'Items pending confirmation' },
               ].map(m => (
                 <div key={m.label} style={{
                   background: 'rgba(255,255,255,0.025)',
@@ -303,18 +302,8 @@ export default function App() {
               ))}
             </div>
 
-            <iframe
-              src="http://localhost:8501"
-              title="HITL Review Dashboard"
-              style={{
-                width: '100%',
-                height: '820px',
-                border: '1px solid var(--border-default)',
-                borderRadius: 'var(--radius-lg)',
-                background: '#070a12',
-                display: 'block'
-              }}
-            />
+            {/* Review Queue — lists all needs_review jobs */}
+            <ReviewQueue onOpenJob={(job) => { handleLoadJob(job); setTab('single') }} />
           </div>
         )}
       </main>

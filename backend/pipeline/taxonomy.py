@@ -46,7 +46,7 @@ APPROVED_DISTRIBUTOR_DOMAINS: frozenset[str] = frozenset({
 
 def is_ecommerce(url: str) -> bool:
     try:
-        host = urlparse(url).netloc.lower().lstrip("www.")
+        host = urlparse(url).netloc.lower().removeprefix("www.")
         for blocked in ECOMMERCE_BLOCKLIST:
             if host == blocked or host.endswith("." + blocked):
                 return True
@@ -56,7 +56,7 @@ def is_ecommerce(url: str) -> bool:
 
 def is_approved_distributor(url: str) -> bool:
     try:
-        host = urlparse(url).netloc.lower().lstrip("www.")
+        host = urlparse(url).netloc.lower().removeprefix("www.")
         for dist in APPROVED_DISTRIBUTOR_DOMAINS:
             if host == dist or host.endswith("." + dist):
                 return True
@@ -86,7 +86,7 @@ def guess_mfr_domain(brand: str) -> str | None:
         # Clean response
         if "http" in response:
             response = urlparse(response).netloc
-        response = response.lstrip("www.").strip()
+        response = response.removeprefix("www.").strip()
         
         # Validate it looks like a domain
         if "." in response and len(response) > 3 and " " not in response:
@@ -103,7 +103,7 @@ def is_manufacturer_domain(url: str, brand: str) -> bool:
     if not domain:
         return not is_ecommerce(url) and not is_approved_distributor(url)
     try:
-        host = urlparse(url).netloc.lower().lstrip("www.")
+        host = urlparse(url).netloc.lower().removeprefix("www.")
         return host == domain or host.endswith("." + domain)
     except Exception:
         return False

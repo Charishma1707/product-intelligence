@@ -18,8 +18,7 @@ export default function AgentPromptBar({ jobId, onAgentUpdate, currentStage }) {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'Authorization': 'Basic YWRtaW46dW5paGFjaw=='
-        },
+          },
         body: JSON.stringify({ job_id: jobId, prompt: prompt.trim() })
       })
       const data = await res.json()

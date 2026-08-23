@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import AgentPromptBar from './AgentPromptBar.jsx'
 import FinalFieldsTable from './FinalFieldsTable.jsx'
 
@@ -97,6 +97,53 @@ export default function HITLReview({ product, onResolved }) {
 
   const [deliveryCorrections, setDeliveryCorrections] = useState({})
 
+  // Keep internal stage state in sync when external product object updates
+  useEffect(() => {
+    if (!product) return
+    setActiveStage(getInitialStage())
+    setIdentity({
+      brand: product.brand || '',
+      manufacturer_name: product.manufacturer_name || product.brand_name || product.brand || '',
+      mpn: product.mpn || '',
+      description: product.description || product.input_part_desc || '',
+      series: product.series || '',
+      alternate_part_number: product.alternate_part_number || '',
+    })
+    setSourcing({
+      mfr_url: product.mfr_url || '',
+      spec_sheet_url: product.spec_sheet_url || '',
+      manual_url: product.manual_url || '',
+      installation_url: product.installation_url || '',
+      sds_url: product.sds_url || '',
+      warranty_url: product.warranty_url || '',
+      catalog_url: product.catalog_url || '',
+      energy_guide_url: product.energy_guide_url || '',
+      product_image_url: product.product_image_url || '',
+      video_link: product.video_link || '',
+    })
+    setTaxonomy({
+      category: product.category || '',
+      subcategory: product.subcategory || '',
+      unspsc: product.unspsc || '',
+    })
+    setCopywriting({
+      invoice_desc: product.invoice_desc || '',
+      short_desc: product.short_desc || '',
+      long_desc: product.long_desc || '',
+      retail_desc: product.retail_desc || '',
+      mobile_desc: product.mobile_desc || '',
+      marketing_description: product.marketing_description || '',
+      product_name: product.product_name || '',
+      trade_name: product.trade_name || '',
+      standards_approvals: product.standards_approvals || '',
+    })
+    if (product.specifications) {
+      setSpecCorrections(Object.fromEntries(
+        Object.keys(product.specifications).map(fname => [fname, String(product.specifications[fname]?.value ?? '')])
+      ))
+    }
+  }, [product])
+
   const handleIdentityChange = (k, v) => setIdentity(prev => ({ ...prev, [k]: v }))
   const handleSourcingChange = (k, v) => setSourcing(prev => ({ ...prev, [k]: v }))
   const handleTaxonomyChange = (k, v) => setTaxonomy(prev => ({ ...prev, [k]: v }))
@@ -163,8 +210,7 @@ export default function HITLReview({ product, onResolved }) {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'Authorization': 'Basic YWRtaW46dW5paGFjaw==',
-        },
+          },
         body: JSON.stringify({ job_id, corrections, reviewer }),
       })
       const data = await res.json()
@@ -186,6 +232,14 @@ export default function HITLReview({ product, onResolved }) {
           post_approval_summary: data.post_approval_summary,
         })
       } else {
+        if (data.product) {
+          onResolved({
+            ...data.product,
+            job_id: data.job_id,
+            hitl_required: true,
+            pipeline_status: nextStatus,
+          })
+        }
         // Advance stage
         if (nextStatus === 'needs_review_retrieval') setActiveStage(2)
         else if (nextStatus === 'needs_review_extraction') setActiveStage(3)
@@ -382,7 +436,14 @@ export default function HITLReview({ product, onResolved }) {
 
             <div className="grid-2" style={{ marginBottom: 16 }}>
               <div className="form-group">
-                <label className="form-label" htmlFor="hitl-mfr-url">Official Product Page (MFR URL)</label>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <label className="form-label" htmlFor="hitl-mfr-url">Official Product Page (MFR URL)</label>
+                  {sourcing.mfr_url && (
+                    <a href={sourcing.mfr_url} target="_blank" rel="noreferrer" style={{ fontSize: '0.75rem', color: '#60a5fa', textDecoration: 'underline', marginBottom: 4 }}>
+                      Open Page ↗
+                    </a>
+                  )}
+                </div>
                 <input
                   id="hitl-mfr-url"
                   className="form-input"
@@ -393,7 +454,14 @@ export default function HITLReview({ product, onResolved }) {
                 />
               </div>
               <div className="form-group">
-                <label className="form-label" htmlFor="hitl-spec-url">Specification Sheet URL (PDF)</label>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <label className="form-label" htmlFor="hitl-spec-url">Specification Sheet URL (PDF)</label>
+                  {sourcing.spec_sheet_url && (
+                    <a href={sourcing.spec_sheet_url} target="_blank" rel="noreferrer" style={{ fontSize: '0.75rem', color: '#60a5fa', textDecoration: 'underline', marginBottom: 4 }}>
+                      Open PDF ↗
+                    </a>
+                  )}
+                </div>
                 <input
                   id="hitl-spec-url"
                   className="form-input"

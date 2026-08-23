@@ -148,8 +148,11 @@ def _extract_field_with_rag(
     if not rag_chunks:
         return None
 
-    # Build a tiny focused context
+    # Build a tiny focused context that always includes the input description
     context_parts = []
+    if description and description.strip():
+        context_parts.append(f"[SOURCE: Input Product Description]\n{description.strip()}")
+        
     for i, c in enumerate(rag_chunks):
         text = (c.get("text") or "")[:1500]
         url = c.get("url", "")
@@ -168,17 +171,17 @@ def _extract_field_with_rag(
 
     prompt = f"""Product: {brand} {mpn}
 Category: {category}
-Description: {description}
 
 {constraint_note}
 
-Documentation excerpts:
+Documentation and Input Description excerpts:
 {context}
 
 TASK: Find the '{readable}' for this exact product.
-- Return the value ONLY if explicitly stated in the documentation above.
-- Include the exact verbatim quote as 'snippet' and the source URL.
-- If not found, return null for value.
+- Look in BOTH the input description and the documentation excerpts above.
+- Return the value if explicitly stated or clearly indicated in the description or documentation.
+- Include the exact verbatim quote as 'snippet' and the source URL (or 'Input Description' if found in description).
+- If not found in either, return null for value.
 - Never hallucinate or guess.
 
 Return JSON only: {{"value": "...", "snippet": "...", "url": "..."}}"""
@@ -668,11 +671,23 @@ def extract(
     """
     results: dict[str, ExtractedField] = {f: ExtractedField() for f in expected_fields}
 
-    first_url = chunks[0].get("url") if chunks else None
-    first_mfr_chunk = next((c for c in chunks if c.get("is_mfr_domain")), chunks[0] if chunks else None)
+    # Create synthetic chunk from input description if no web chunks retrieved
+    effective_chunks = list(chunks)
+    if not effective_chunks and description and description.strip():
+        effective_chunks = [{
+            "text": f"Product Input Description: {description.strip()}",
+            "source_type": "webpage_text",
+            "url": "Input Description",
+            "is_mfr_domain": False,
+            "mpn_verified": True,
+            "source_tier": 3
+        }]
+
+    first_url = effective_chunks[0].get("url") if effective_chunks else None
+    first_mfr_chunk = next((c for c in effective_chunks if c.get("is_mfr_domain")), effective_chunks[0] if effective_chunks else None)
 
     # ── Pass 0: Dedicated Series extraction ─────────────────────────────────
-    series_val = _extract_series(brand, mpn, description, category, chunks)
+    series_val = _extract_series(brand, mpn, description, category, effective_chunks)
     if series_val:
         ef = ExtractedField()
         ef.value = series_val
@@ -681,7 +696,7 @@ def extract(
         results["series"] = ef
         logger.info("[Extractor] Series locked: %s", series_val)
 
-    if not chunks:
+    if not effective_chunks:
         logger.warning("[Extractor] No chunks available — skipping to inference")
     else:
         # ─────────────────────────────────────────────────────────────────────
@@ -712,6 +727,9 @@ def extract(
             if field_name in series_knowledge and is_series_shared(field_name):
                 sk = series_knowledge[field_name]
                 if sk.get("scope", "series") == "series":
+                    from pipeline.knowledge_store import increment_metric
+                    increment_metric("series_hits")
+                    increment_metric("searches_avoided")
                     ef = results.get(field_name, ExtractedField())
                     ef.value = sk["value"]
                     ef.source_type = sk.get("source") or "series_knowledge"
@@ -722,7 +740,7 @@ def extract(
             # ── 2. Run Attribute-Specific RAG ──
             extracted = _extract_field_with_rag(
                 brand, mpn, description, category,
-                field_name, product_id, chunks
+                field_name, product_id, effective_chunks
             )
             if extracted:
                 prev = results.get(field_name)

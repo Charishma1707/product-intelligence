@@ -3,12 +3,17 @@ import logging
 import sys
 from pathlib import Path
 
+import sys
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8")
+
 # Setup
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(name)s — %(message)s",
 )
 logger = logging.getLogger("trace")
+
 
 from dotenv import load_dotenv
 BASE = Path(__file__).parent
@@ -37,9 +42,12 @@ def trace_product(target_mpn):
     with open(expected_csv, newline="", encoding="utf-8-sig") as f:
         reader = csv.DictReader(f)
         for row in reader:
-            if (row.get("PART_NUMBER") or "").strip() == target_mpn:
+            if target_mpn in ((row.get("PART_NUMBER") or "").strip(), (row.get("Mfg_Part_Num") or "").strip(), (row.get("MANUFACTURER_PART_NUMBER") or "").strip()):
                 expected_row = row
                 break
+
+
+
 
     brand = (target_row.get("Part_Manuf") or target_row.get("E1_Brand") or "").strip()
     desc = (target_row.get("Part_Desc") or "").strip()
@@ -117,25 +125,26 @@ def trace_product(target_mpn):
         if not exp_val and not act_val:
             continue
             
-        status = " "
+        status = "    "
         if exp_val and act_val:
             if exp_val.lower() == act_val.lower():
-                status = "✅"
+                status = "[OK]"
                 matches += 1
             else:
-                status = "❌"
+                status = "[DIFF]"
                 mismatches += 1
         elif exp_val and not act_val:
-            status = "⚠️"
+            status = "[MISS]"
             misses += 1
         elif act_val and not exp_val:
-            status = "➕"
+            status = "[NEW]"
             
-        print(f"{status} {key:<28} | {exp_val[:38]:<40} | {act_val[:38]:<40}")
+        print(f"{status:<6} {key:<28} | {exp_val[:38]:<40} | {act_val[:38]:<40}")
 
     print("-" * 115)
     print(f"Matches: {matches} | Mismatches: {mismatches} | Misses: {misses}")
     print("="*80)
+
 
 if __name__ == "__main__":
     mpn = sys.argv[1] if len(sys.argv) > 1 else "WDTS7024RZ"

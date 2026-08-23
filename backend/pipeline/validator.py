@@ -13,8 +13,9 @@ from __future__ import annotations
 import logging
 import re
 from difflib import SequenceMatcher
+from typing import Any
 
-from schema import SourceType, Citation, FieldValue
+from schema import SourceType, Citation, FieldValue, FieldStatus
 
 logger = logging.getLogger(__name__)
 
@@ -153,7 +154,6 @@ def _llm_check_attribute_plausibility(category: str, description: str, attribute
             messages=[{"role": "user", "content": prompt}],
             response_format={"type": "json_object"},
             temperature=0.1,
-            max_tokens=400
         )
         parsed = parse_json_response(resp)
         return parsed.get("issues", {})
@@ -173,6 +173,7 @@ def validate(
     and returns (specifications, overall_confidence, flagged_fields).
     """
     specs = {}
+    flagged = []
     # Run LLM plausibility audit on non-empty extracted attributes
     raw_attr_dict = {fname: getattr(ext, "value", None) for fname, ext in extracted_fields.items() if getattr(ext, "value", None) is not None}
     llm_issues = _llm_check_attribute_plausibility(category, description, raw_attr_dict) if raw_attr_dict else {}
@@ -180,6 +181,14 @@ def validate(
     for fname, ext in extracted_fields.items():
         val = ext.value
         if val is None:
+            # Document missing / null attributes with clear explanation
+            specs[fname] = FieldValue(
+                value=None,
+                confidence=0.0,
+                status=FieldStatus.MISSING,
+                extraction_method="missing",
+                source=Citation(evidence="Not found in retrieved documentation or input description; not applicable or product-specific data unavailable.")
+            )
             continue
 
         # Check for placeholder/garbage values (e.g. 'yes' for material or voltage)
@@ -209,6 +218,10 @@ def validate(
             elif stype == "series_knowledge":
                 base = 0.92
                 cause = "Inherited from verified series-level knowledge repository."
+            elif stype in ("description", "input_description") or ext.url == "Input Description":
+                base = 0.95
+                method = "extracted_description"
+                cause = "Directly extracted from user input product description."
             elif stype in ("webpage_text", "pdf_text"):
                 if mpn_verified or source_tier in (1, 3):
                     base = 0.88
@@ -249,6 +262,8 @@ def validate(
                 original_chunk = next((c for c in chunks if c.get("url") == ext.url), None)
                 
             chunk_text = original_chunk["text"] if original_chunk else ""
+            if not chunk_text and description:
+                chunk_text = description
             if not _snippet_in_text(ext.snippet, chunk_text):
                 penalties += 0.40
                 method = "inferred"
@@ -296,7 +311,7 @@ def validate(
             doc_id=ext.doc_id,
             doc_name=ext.doc_name,
             page_number=ext.page_number,
-            snippet=ext.snippet,
+            evidence=ext.snippet or cause,
             table_location=ext.table_location,
             chart_description=ext.chart_description,
             similar_products_used=ext.similar_products_used
@@ -305,9 +320,9 @@ def validate(
         specs[fname] = FieldValue(
             value=val,
             confidence=round(conf, 3),
-            method=method,
-            cause=cause,
-            citation=cit
+            extraction_method=method,
+            status=FieldStatus.VERIFIED if conf >= 0.85 else (FieldStatus.INFERRED if method == "inferred" else FieldStatus.NEEDS_REVIEW),
+            source=cit
         )
         
     overall = sum(f.confidence for f in specs.values()) / len(specs) if specs else 0.0

@@ -230,7 +230,7 @@ def export_to_unilog_format(records: list) -> str:
         # ── ATTRIBUTES (up to 50 label/value/uom triplets) ────────────────────
         # Specifications come out in insertion order from the pipeline.
         # The first attribute must be "Series".
-        specs = _get("specifications") or {}
+        specs = _get("specifications") or _get("extracted_fields") or {}
 
         # Garbage/boolean values to reject from attribute values
         _GARBAGE_VALUES = {"yes", "no", "true", "false", "null", "none", "n/a",

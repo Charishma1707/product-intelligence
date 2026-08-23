@@ -23,18 +23,6 @@ from fastapi.security import HTTPBasic, HTTPBasicCredentials
 import secrets
 from pydantic import BaseModel
 
-security = HTTPBasic()
-
-def authenticate(credentials: HTTPBasicCredentials = Depends(security)):
-    correct_username = secrets.compare_digest(credentials.username, "admin")
-    correct_password = secrets.compare_digest(credentials.password, "unihack")
-    if not (correct_username and correct_password):
-        raise HTTPException(
-            status_code=401,
-            detail="Incorrect email or password",
-            headers={"WWW-Authenticate": "Basic"},
-        )
-    return credentials.username
 
 from schema import (
     EnrichRequest, EnrichResponse, SampleProduct, ProductRecord, FieldValue, Citation
@@ -107,7 +95,7 @@ def _state_to_record(state: PipelineState) -> ProductRecord:
         unspsc=state.get("unspsc"),
         manufacturer_name=state.get("manufacturer_name"),
         brand_name=state.get("brand_name"),
-        specifications=state.get("specifications", {}),
+        specifications=state.get("specifications") or state.get("extracted_fields") or {},
         flagged_for_review=state.get("flagged_for_review", []),
         logs=state.get("logs", []),
         overall_confidence=state.get("overall_confidence", 0.0),
@@ -172,20 +160,31 @@ def _state_to_record(state: PipelineState) -> ProductRecord:
 
 
 @app.post("/enrich/v2", response_model=LGEnrichResponse, tags=["LangGraph v2"])
-async def enrich_v2(request: EnrichRequest, user: str = Depends(authenticate)):
+async def enrich_v2(request: EnrichRequest):
     effective_brand = request.brand or request.part_manuf or request.e1_brand or ""
-    # Check for caching/deduplication
-    existing_jobs = list_jobs(status="complete", limit=1000)
-    for job in existing_jobs:
-        if (job.get("brand") == effective_brand or job.get("mpn") == request.mpn) and job.get("mpn") == request.mpn:
-            logger.info("Cache hit for %s %s. Returning existing completed job %s", effective_brand, request.mpn, job["job_id"])
-            full_job = load_job(job["job_id"]) or job
-            return LGEnrichResponse(
-                status="complete",
-                job_id=job["job_id"],
-                product=_state_to_record(full_job),
-                hitl_required=False
-            )
+    # Check for caching/deduplication — return if already processed (complete OR pending review)
+    all_cached_jobs = list_jobs(limit=2000)
+    for job in all_cached_jobs:
+        job_status = job.get("status", "")
+        if job.get("mpn") == request.mpn and job.get("brand", "").lower() == effective_brand.lower():
+            if job_status == "complete":
+                logger.info("[Cache] Returning already-completed job %s for %s %s", job["job_id"], effective_brand, request.mpn)
+                full_job = load_job(job["job_id"]) or job
+                return LGEnrichResponse(
+                    status="complete",
+                    job_id=job["job_id"],
+                    product=_state_to_record(full_job),
+                    hitl_required=False
+                )
+            elif job_status.startswith("needs_review"):
+                logger.info("[Cache] Returning in-progress HITL job %s for %s %s", job["job_id"], effective_brand, request.mpn)
+                full_job = load_job(job["job_id"]) or job
+                return LGEnrichResponse(
+                    status=job_status,
+                    job_id=job["job_id"],
+                    product=_state_to_record(full_job),
+                    hitl_required=True
+                )
 
     job_id = str(uuid.uuid4())
     initial_state = make_initial_state(
@@ -237,7 +236,7 @@ async def enrich_v2(request: EnrichRequest, user: str = Depends(authenticate)):
 
 
 @app.post("/enrich/resume", response_model=LGEnrichResponse, tags=["LangGraph v2"])
-async def resume_hitl(req: HITLResumeRequest, user: str = Depends(authenticate)):
+async def resume_hitl(req: HITLResumeRequest):
     state = load_job(req.job_id)
     if not state:
         raise HTTPException(status_code=404, detail=f"Job {req.job_id} not found.")
@@ -318,7 +317,7 @@ class HITLAgentPromptRequest(BaseModel):
 
 
 @app.post("/enrich/agent/prompt", response_model=LGEnrichResponse, tags=["LangGraph v2"])
-async def agent_prompt(req: HITLAgentPromptRequest, user: str = Depends(authenticate)):
+async def agent_prompt(req: HITLAgentPromptRequest):
     state = load_job(req.job_id)
     if not state:
         raise HTTPException(status_code=404, detail=f"Job {req.job_id} not found.")
@@ -357,7 +356,7 @@ class HITLStopRequest(BaseModel):
 
 
 @app.post("/enrich/stop", response_model=LGEnrichResponse, tags=["LangGraph v2"])
-async def stop_enrich(req: HITLStopRequest, user: str = Depends(authenticate)):
+async def stop_enrich(req: HITLStopRequest):
     state = load_job(req.job_id)
     if not state:
         raise HTTPException(status_code=404, detail=f"Job {req.job_id} not found.")
@@ -398,7 +397,7 @@ class ExportSaveRequest(BaseModel):
 
 
 @app.post("/export/save", tags=["LangGraph v2"])
-async def export_save(req: ExportSaveRequest, user: str = Depends(authenticate)):
+async def export_save(req: ExportSaveRequest):
     """
     Persist the final product record to the product_attributes DB table.
     If job_id is provided, saves that specific job. Otherwise saves all complete jobs.
@@ -440,8 +439,11 @@ async def export_csv(status: str | None = "complete"):
     """
     from fastapi.responses import PlainTextResponse
 
-    # Load all jobs (or filter by status)
+    # Load all jobs (or filter by status, falling back to all if empty)
     summary_states = list_jobs(status=status, limit=1000)
+    if not summary_states and status:
+        summary_states = list_jobs(status=None, limit=1000)
+
     states = [load_job(s["job_id"]) for s in summary_states if load_job(s["job_id"]) is not None]
     records = [_state_to_record(s) for s in states]
 
@@ -456,9 +458,11 @@ async def export_csv(status: str | None = "complete"):
     deduped_records.reverse()  # restore original order
 
     if not deduped_records:
-        raise HTTPException(status_code=404, detail="No records found to export.")
-
-    csv_string = export_to_unilog_format(deduped_records)
+        # Return header-only CSV instead of 404 error
+        from exporter import UNILOG_HEADERS
+        csv_string = ",".join(UNILOG_HEADERS) + "\n"
+    else:
+        csv_string = export_to_unilog_format(deduped_records)
 
     # Save a permanent copy on the backend
     try:
@@ -475,52 +479,114 @@ async def export_csv(status: str | None = "complete"):
         headers={"Content-Disposition": "attachment; filename=Unilog_Submission.csv"}
     )
 
+DEFAULT_SAMPLES = [
+    SampleProduct(
+        brand="3M",
+        mpn="3MABR-7100075690",
+        description="3M 775L Stikit Film P180 - Cubitron II 50 Disc/Box",
+        part_manuf="3M",
+        e1_brand="3M",
+        unilog_brand="3M",
+        dib_brand="3M",
+        label="3M — 3MABR-7100075690 (Cubitron II Disc)"
+    ),
+    SampleProduct(
+        brand="Schneider Electric",
+        mpn="SQD-HOM2150",
+        description="Square D Homeline 150 Amp Two-Pole Circuit Breaker",
+        part_manuf="Schneider Electric",
+        e1_brand="Square D",
+        unilog_brand="Schneider Electric",
+        dib_brand="Square D",
+        label="Schneider Electric — SQD-HOM2150 (Circuit Breaker)"
+    ),
+    SampleProduct(
+        brand="DEWALT",
+        mpn="DCD791B",
+        description="DEWALT 20V MAX XR Cordless Drill/Driver 1/2-Inch Tool Only",
+        part_manuf="DEWALT",
+        e1_brand="Dewalt",
+        unilog_brand="DEWALT",
+        dib_brand="Dewalt",
+        label="DEWALT — DCD791B (20V Cordless Drill)"
+    ),
+    SampleProduct(
+        brand="Milwaukee",
+        mpn="2767-20",
+        description="Milwaukee M18 FUEL 1/2 High Torque Impact Wrench Friction Ring",
+        part_manuf="Milwaukee Tool",
+        e1_brand="Milwaukee",
+        unilog_brand="Milwaukee Tool",
+        dib_brand="Milwaukee",
+        label="Milwaukee — 2767-20 (Impact Wrench)"
+    ),
+    SampleProduct(
+        brand="Fluke",
+        mpn="FLUKE-117",
+        description="Fluke 117 Electrician's Multimeter with Non-Contact Voltage",
+        part_manuf="Fluke Corporation",
+        e1_brand="Fluke",
+        unilog_brand="Fluke",
+        dib_brand="Fluke",
+        label="Fluke — FLUKE-117 (Digital Multimeter)"
+    )
+]
+
 @app.get("/sample-products", tags=["LangGraph v2"], response_model=list[SampleProduct])
 async def get_sample_products():
-    # Pull directly from the Unihack dataset
-    sample_file = _BACKEND_DIR.parent / "Unihack_ Sample Dataset - Input.csv"
-    if not sample_file.exists():
-        raise HTTPException(status_code=404, detail="Unihack Sample Dataset not found")
+    # Search for sample dataset file (checking common naming variations)
+    possible_files = [
+        _BACKEND_DIR.parent / "Unihack_ Sample Dataset - Input.csv",
+        _BACKEND_DIR.parent / "Unihack_Sample_Dataset_Input.csv",
+        _BACKEND_DIR.parent / "Unihack_Sample_Dataset - Input.csv",
+        _BACKEND_DIR.parent / "sample_input.csv",
+    ]
+    sample_file = next((f for f in possible_files if f.exists()), None)
+    if not sample_file:
+        return DEFAULT_SAMPLES
     
     samples = []
-    with open(sample_file, "r", encoding="utf-8-sig") as f:
-        reader = csv.DictReader(f)
-        for i, row in enumerate(reader, start=2):  # Row 2 is the first data row (1-indexed CSV line)
-            if len(samples) >= 30: # Limit dropdown to 30 items
-                break
+    try:
+        with open(sample_file, "r", encoding="utf-8-sig") as f:
+            reader = csv.DictReader(f)
+            for i, row in enumerate(reader, start=2):  # Row 2 is the first data row
+                if len(samples) >= 30: # Limit dropdown to 30 items
+                    break
+                    
+                manuf = (row.get("Part_Manuf") or "").strip()
+                e1 = (row.get("E1_Brand") or "").strip()
+                unilog = (row.get("Unilog_Brand") or "").strip()
+                dib = (row.get("DIB_Brand") or "").strip()
+                mpn = (row.get("Mfg_Part_Num") or "").strip()
+                desc = (row.get("Part_Desc") or "").strip()
                 
-            manuf = (row.get("Part_Manuf") or "").strip()
-            e1 = (row.get("E1_Brand") or "").strip()
-            unilog = (row.get("Unilog_Brand") or "").strip()
-            dib = (row.get("DIB_Brand") or "").strip()
-            mpn = (row.get("Mfg_Part_Num") or "").strip()
-            desc = (row.get("Part_Desc") or "").strip()
-            
-            if not mpn:
-                continue
+                if not mpn:
+                    continue
+                    
+                label = f"[Row {i}] {mpn} — {desc[:35]}..." if desc else f"[Row {i}] {mpn}"
                 
-            brand_display = manuf or e1 or "Brand"
-            label = f"[Row {i}] {mpn} — {desc[:35]}..." if desc else f"[Row {i}] {mpn}"
-            
-            samples.append(SampleProduct(
-                brand=manuf or e1 or "",
-                mpn=mpn,
-                description=desc,
-                part_manuf=manuf,
-                e1_brand=e1,
-                unilog_brand=unilog,
-                dib_brand=dib,
-                label=label
-            ))
-    return samples
+                samples.append(SampleProduct(
+                    brand=manuf or e1 or "",
+                    mpn=mpn,
+                    description=desc,
+                    part_manuf=manuf,
+                    e1_brand=e1,
+                    unilog_brand=unilog,
+                    dib_brand=dib,
+                    label=label
+                ))
+    except Exception as e:
+        logger.warning(f"Could not parse sample file: {e}")
+        return DEFAULT_SAMPLES
+
+    return samples if samples else DEFAULT_SAMPLES
 
 @app.post("/enrich/batch", tags=["LangGraph v2"])
 async def enrich_batch(
     file: UploadFile = File(...),
     provided_schema: str = Form(None),
     strict_schema: bool = Form(False),
-    force_review: bool = Form(False),
-    user: str = Depends(authenticate)
+    force_review: bool = Form(False)
 ):
     if not file.filename.endswith('.csv'):
         raise HTTPException(status_code=400, detail="Only .csv files are supported")
@@ -613,7 +679,7 @@ async def enrich_batch(
             final_state = await loop.run_in_executor(None, _run)
             save_job(final_state)
             # Add to local cache list so duplicates in the SAME batch are also cached
-            if final_state.get("status") in ("completed", "needs_review"):
+            if final_state.get("status") in ("complete", "needs_review"):
                 existing_jobs_cache.append(final_state)
             
             record = _state_to_record(final_state)
@@ -623,10 +689,10 @@ async def enrich_batch(
                 "category": record.category,
                 "overall_confidence": record.overall_confidence,
                 "flagged_for_review": record.flagged_for_review,
-                "status": "success" if record.status in ("completed", "needs_review") else "failed",
+                "status": "success" if record.status in ("complete", "needs_review") else "failed",
                 "error": final_state.get("error")
             })
-            if record.status in ("completed", "needs_review"):
+            if record.status in ("complete", "needs_review"):
                 succeeded += 1
             else:
                 failed += 1

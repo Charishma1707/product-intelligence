@@ -231,10 +231,30 @@ def _fetch_url(url: str, brand: str = "") -> list[dict]:
             logger.debug("[Retriever] Cache check failed for %s: %s", url, e)
 
     headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/124.0.0.0 Safari/537.36"
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7",
+        "Accept-Language": "en-US,en;q=0.9",
+        "Accept-Encoding": "gzip, deflate, br",
+        "DNT": "1",
+        "Connection": "keep-alive",
+        "Upgrade-Insecure-Requests": "1"
     }
-    resp = requests.get(url, headers=headers, timeout=_REQUEST_TIMEOUT, stream=True)
-    resp.raise_for_status()
+    try:
+        resp = requests.get(url, headers=headers, timeout=_REQUEST_TIMEOUT, stream=True)
+        resp.raise_for_status()
+    except requests.exceptions.HTTPError as e:
+        logger.warning("[Retriever] HTTP Error %s for %s - attempting fallback fetch with custom headers", e, url)
+        # Attempt fallback without stream/with modified User-Agent if 403
+        try:
+            fallback_headers = {"User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4.1 Safari/605.1.15"}
+            resp = requests.get(url, headers=fallback_headers, timeout=_REQUEST_TIMEOUT)
+            resp.raise_for_status()
+        except Exception as e2:
+            logger.error("[Retriever] Failed to fetch %s: %s", url, e2)
+            return []
+    except Exception as e:
+        logger.error("[Retriever] Failed to fetch %s: %s", url, e)
+        return []
 
     content_type = resp.headers.get("Content-Type", "").lower()
     raw_bytes = resp.content
@@ -310,11 +330,11 @@ def _extract_digital_assets_from_html(
         if not url:
             return False
         try:
-            u_host = urlparse(url).netloc.lower().lstrip("www.")
+            u_host = urlparse(url).netloc.lower().removeprefix("www.")
             if mfr_domain:
                 return u_host == mfr_domain or u_host.endswith("." + mfr_domain)
             # Fallback: same host as page we fetched from
-            return u_host == host.lstrip("www.")
+            return u_host == host.removeprefix("www.")
         except Exception:
             return False
 
@@ -442,7 +462,7 @@ def _llm_resolve_mfr(brand: str, mpn: str, description: str, category: str) -> d
         )
         data = parse_json_response(raw)
         confidence = float(data.get("confidence", 0.0))
-        mfr_domain = (data.get("mfr_domain") or "").strip().lower().lstrip("www.").rstrip("/")
+        mfr_domain = (data.get("mfr_domain") or "").strip().lower().removeprefix("www.").rstrip("/")
         mfr_url_hint = (data.get("mfr_url_hint") or "").strip() or None
         logger.info(
             "[LLM Oracle] brand=%s -> domain=%s, hint=%s, conf=%.2f, reason=%s",
@@ -503,18 +523,41 @@ def _search_web(brand: str, mpn: str, max_results: int = 8, description: str = "
     Pass 4: Exact MPN match          → any other relevant pages
     """
     import json as _json
-    serper_api_key = os.getenv("SERPER_API_KEY")
-    if not serper_api_key:
-        logger.warning("No SERPER_API_KEY — using fallback distributor URLs")
-        import urllib.parse
-        encoded_mpn = urllib.parse.quote(mpn)
-        fallback_urls = [
-            f"https://www.grainger.com/search?searchQuery={encoded_mpn}",
-            f"https://www.zoro.com/search?q={encoded_mpn}",
-        ]
-        return {"mfr_url": None, "all_urls": fallback_urls[:max_results]}
+    from dotenv import load_dotenv
+    load_dotenv(Path(__file__).resolve().parent.parent / ".env", override=True)
+    serper_raw = os.getenv("SERPER_API_KEY")
+    serper_api_key = serper_raw.strip() if serper_raw else None
 
-    headers = {"X-API-KEY": serper_api_key, "Content-Type": "application/json"}
+    def _fallback_free_search(query: str, max_num: int = 5) -> list[str]:
+        """Free web search fallback using duckduckgo_search or html search."""
+        urls = []
+        try:
+            from duckduckgo_search import DDGS
+            with DDGS() as ddgs:
+                results = list(ddgs.text(query, max_results=max_num))
+                for r in results:
+                    href = r.get("href") or r.get("link")
+                    if href:
+                        urls.append(href)
+        except Exception:
+            try:
+                import urllib.parse
+                resp = requests.get(
+                    f"https://html.duckduckgo.com/html/?q={urllib.parse.quote(query)}",
+                    headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"},
+                    timeout=6
+                )
+                if resp.ok:
+                    links = re.findall(r'href=["\'](/l/\?uddg=[^"\']+)["\']', resp.text)
+                    for l in links:
+                        m = re.search(r'uddg=([^&]+)', l)
+                        if m:
+                            urls.append(urllib.parse.unquote(m.group(1)))
+            except Exception:
+                pass
+        return urls
+
+    headers = {"X-API-KEY": serper_api_key, "Content-Type": "application/json"} if serper_api_key else {}
     mfr_url: str | None = None
     all_urls: list[str] = []
 
@@ -578,17 +621,20 @@ def _search_web(brand: str, mpn: str, max_results: int = 8, description: str = "
         return False
 
     def _run_search(query: str, num: int = 5) -> list[str]:
-        try:
-            payload = _json.dumps({"q": query, "num": num})
-            resp = requests.post(
-                "https://google.serper.dev/search",
-                headers=headers, data=payload, timeout=12
-            )
-            resp.raise_for_status()
-            return [item.get("link", "") for item in resp.json().get("organic", [])]
-        except Exception as e:
-            logger.error("Serper search failed: %s", e)
-            return []
+        if serper_api_key:
+            try:
+                payload = _json.dumps({"q": query, "num": num})
+                resp = requests.post(
+                    "https://google.serper.dev/search",
+                    headers=headers, data=payload, timeout=12
+                )
+                resp.raise_for_status()
+                res = [item.get("link", "") for item in resp.json().get("organic", [])]
+                if res:
+                    return res
+            except Exception as e:
+                logger.error("Serper search failed: %s. Using free fallback.", e)
+        return _fallback_free_search(query, num)
 
     # ── Pass 1: Targeted site: search using best-known manufacturer domain ───
     if mfr_domain:
@@ -702,19 +748,34 @@ def retrieve(brand: str, mpn: str, description: str, category: str) -> dict:
     # 2. Check ChromaDB cache
     chunks = _get_cached_chunks(product_id)
     if chunks:
-        logger.info("Found %d cached chunks in ChromaDB for %s — skipping LLM Oracle & web calls", len(chunks), product_id)
-        # Extract mfr_url and assets directly from cached chunk metadata (zero-latency, zero-cost)
+        from pipeline.knowledge_store import increment_metric
+        increment_metric("cache_hits")
+        increment_metric("searches_avoided")
+        logger.info(
+            "[Retriever] CACHE HIT — %d chunks restored from ChromaDB for %s (zero web calls, zero cost)",
+            len(chunks), product_id
+        )
+        # Extract mfr_url and assets directly from cached chunk metadata
         cached_mfr_url = next((c["url"] for c in chunks if c.get("is_mfr_domain") and c.get("url")), None)
         if not cached_mfr_url:
             cached_mfr_url = next((c["url"] for c in chunks if c.get("url")), None)
 
         cached_spec_sheet = next((c["url"] for c in chunks if c.get("url", "").lower().endswith(".pdf")), None)
-        cached_image = next((c.get("image_base64") for c in chunks if c.get("image_base64")), None)
+        all_chunk_urls = list({c["url"] for c in chunks if c.get("url") and c["url"] != cached_mfr_url})
+
+        # Reconstruct mpn_verified from chunk metadata
+        cached_mpn_verified = any(c.get("mpn_verified") for c in chunks)
+
+        logger.info(
+            "[Retriever] Cache restored: mfr_url=%s | spec_sheet=%s | ref_urls=%d | mpn_verified=%s",
+            cached_mfr_url, cached_spec_sheet, len(all_chunk_urls), cached_mpn_verified
+        )
 
         return {
             "chunks": chunks,
             "mfr_url": cached_mfr_url,
-            "ref_urls": list(set(c["url"] for c in chunks if c.get("url") and c["url"] != cached_mfr_url)),
+            "ref_urls": all_chunk_urls,
+            "mpn_verified": cached_mpn_verified,
             "product_image_url": None,
             "spec_sheet_url": cached_spec_sheet,
             "sds_url": None,
@@ -770,7 +831,7 @@ def retrieve(brand: str, mpn: str, description: str, category: str) -> dict:
                 continue
             if is_ecommerce(url):
                 continue
-            parsed_host = urlparse(url).netloc.lower().lstrip("www.")
+            parsed_host = urlparse(url).netloc.lower().removeprefix("www.")
             is_mfr_pdf = (
                 (resolved_mfr_domain and parsed_host.endswith(resolved_mfr_domain))
                 and url.lower().endswith(".pdf")
@@ -802,15 +863,34 @@ def retrieve(brand: str, mpn: str, description: str, category: str) -> dict:
                     elif spec_sheet_url is None:
                         spec_sheet_url = url
 
-                raw_resp = requests.get(
-                    url,
-                    headers={"User-Agent": "Mozilla/5.0"},
-                    timeout=_REQUEST_TIMEOUT,
-                    stream=True
-                )
-                raw_resp.raise_for_status()
+                full_headers = {
+                    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+                    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
+                    "Accept-Language": "en-US,en;q=0.9",
+                    "Connection": "keep-alive"
+                }
+                try:
+                    raw_resp = requests.get(url, headers=full_headers, timeout=_REQUEST_TIMEOUT, stream=True)
+                    raw_resp.raise_for_status()
+                except Exception as http_err:
+                    logger.warning("[Retriever] HTTP Error %s for %s - trying fallback headers", http_err, url)
+                    alt_headers = {"User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4 Safari/605.1.15"}
+                    raw_resp = requests.get(url, headers=alt_headers, timeout=_REQUEST_TIMEOUT)
+                    raw_resp.raise_for_status()
+
                 content_type = raw_resp.headers.get("Content-Type", "").lower()
                 raw_bytes = raw_resp.content
+
+                import hashlib
+                doc_sha256 = hashlib.sha256(raw_bytes).hexdigest()
+                from pipeline.knowledge_store import get_document_by_hash, save_document_metadata, mark_document_processed, increment_metric
+                cached_doc = get_document_by_hash(doc_sha256)
+                if cached_doc:
+                    increment_metric("documents_reused")
+                    increment_metric("searches_avoided")
+                    logger.info("[Retriever] SHA-256 Document Cache HIT for %s (hash=%s)", url, doc_sha256[:10])
+                else:
+                    save_document_metadata(doc_sha256[:16], url, brand, doc_sha256, "", processed=True)
 
                 # ── MPN Verification for the primary MFR URL ─────────────────────
                 # Only check HTML pages (not PDFs) that are the candidate mfr_url

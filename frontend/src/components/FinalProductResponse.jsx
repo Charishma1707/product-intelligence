@@ -15,8 +15,7 @@ export default function FinalProductResponse({ product, postApprovalSummary }) {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'Authorization': 'Basic YWRtaW46dW5paGFjaw=='
-        },
+          },
         body: JSON.stringify({ job_id: product?.job_id })
       })
       const data = await res.json()
@@ -31,7 +30,7 @@ export default function FinalProductResponse({ product, postApprovalSummary }) {
   }
 
   const handleDownloadCsv = () => {
-    window.location.href = `${API}/export/csv?status=complete`
+    window.open(`${API}/export/csv`, '_blank')
   }
 
   const summary = postApprovalSummary || product?.post_approval_summary

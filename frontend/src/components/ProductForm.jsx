@@ -75,8 +75,7 @@ export default function ProductForm({ onResult, onStageChange }) {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'Authorization': 'Basic YWRtaW46dW5paGFjaw==',
-        },
+          },
         body: JSON.stringify({
           brand: activeBrand,
           mpn: mpn.trim(),
@@ -123,49 +122,61 @@ export default function ProductForm({ onResult, onStageChange }) {
           <span className="card-title" style={{ margin: 0 }}>Product Input</span>
         </div>
         {/* Sample loader */}
-        <div className="dropdown-wrapper" ref={dropdownRef}>
+        {/* Foolproof direct sample buttons */}
+        <div style={{ display: 'flex', gap: '8px' }}>
           <button
-            id="load-sample-btn"
             type="button"
             className="btn btn-ghost btn-sm"
-            onClick={() => setDropdown(o => !o)}
-            style={{ display: 'flex', alignItems: 'center', gap: 6 }}
+            onClick={() => {
+              setBrand('Fluke')
+              setPartManuf('Fluke Corporation')
+              setMpn('FLUKE-117')
+              setDescription('Fluke 117 Electricians Multimeter')
+              setE1Brand('Fluke')
+              setUnilogBrand('')
+              setDibBrand('')
+              setError(null)
+            }}
+            style={{ fontSize: '0.75rem', padding: '4px 8px' }}
           >
-            <span>📁 Load Sample Record</span>
-            <span style={{ fontSize: '10px' }}>{dropdownOpen ? '▲' : '▼'}</span>
+            ⚡ Load Fluke
           </button>
-          {dropdownOpen && samples.length > 0 && (
-            <div className="dropdown-menu" style={{ maxHeight: 380, overflowY: 'auto', width: 380, right: 0 }}>
-              {samples.map((s, i) => (
-                <div
-                  key={i}
-                  id={`sample-${i}`}
-                  className="dropdown-item"
-                  onClick={() => loadSample(s)}
-                  style={{ borderBottom: '1px solid var(--border-subtle)', padding: '10px 14px' }}
-                >
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 2 }}>
-                    <div className="dropdown-item-brand" style={{ color: 'var(--blue-400)', fontWeight: 600, fontSize: '0.85rem' }}>
-                      {s.label ? s.label.split(' — ')[0] : s.brand}
-                    </div>
-                    {s.part_manuf && (
-                      <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}>
-                        {s.part_manuf.length > 20 ? s.part_manuf.slice(0, 20) + '…' : s.part_manuf}
-                      </div>
-                    )}
-                  </div>
-                  <div className="dropdown-item-mpn" style={{ fontFamily: 'var(--font-mono)', fontSize: '0.8rem', color: 'var(--text-primary)' }}>
-                    {s.mpn}
-                  </div>
-                  {s.description && (
-                    <div className="dropdown-item-desc" style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginTop: 2, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                      {s.description}
-                    </div>
-                  )}
-                </div>
-              ))}
-            </div>
-          )}
+          
+          <button
+            type="button"
+            className="btn btn-ghost btn-sm"
+            onClick={() => {
+              setBrand('3M')
+              setPartManuf('3M Company')
+              setMpn('3MABR-7100075690')
+              setDescription('3M 775L Stikit Film P180 - Cubitron II 50 Disc/Box')
+              setE1Brand('3M')
+              setUnilogBrand('')
+              setDibBrand('')
+              setError(null)
+            }}
+            style={{ fontSize: '0.75rem', padding: '4px 8px' }}
+          >
+            💿 Load 3M
+          </button>
+          
+          <button
+            type="button"
+            className="btn btn-ghost btn-sm"
+            onClick={() => {
+              setBrand('Whirlpool')
+              setPartManuf('APPDE')
+              setMpn('WDTS7024RZ')
+              setDescription('Dishwasher SS')
+              setE1Brand('APPDE')
+              setUnilogBrand('')
+              setDibBrand('')
+              setError(null)
+            }}
+            style={{ fontSize: '0.75rem', padding: '4px 8px' }}
+          >
+            💧 Load Whirlpool
+          </button>
         </div>
       </div>
 

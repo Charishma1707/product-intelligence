@@ -143,6 +143,7 @@ def get_all_metrics() -> dict[str, int]:
             "searches_avoided": metrics.get("searches_avoided", 0),
             "cache_hits": metrics.get("cache_hits", 0),
             "series_hits": metrics.get("series_hits", 0),
+            "documents_reused": metrics.get("documents_reused", 0),
             "documents_cached": docs_cached,
             "unique_series_cached": series_cached,
             "brand_aliases_cached": aliases_cached,

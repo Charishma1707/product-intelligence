@@ -22,8 +22,8 @@ def info(msg): print(f"  \033[36m[INFO]\033[0m     {msg}")
 
 section("PIPELINE FULL CLEAN SLATE RESET")
 
-# 1. Job store DBs (backend & root)
-for path in [BACKEND / "job_store.db", ROOT / "job_store.db", BACKEND / "jobs.db", ROOT / "jobs.db"]:
+# 1. Job store & Knowledge store DBs (backend & root)
+for path in [BACKEND / "job_store.db", ROOT / "job_store.db", BACKEND / "knowledge_store.db", ROOT / "knowledge_store.db", BACKEND / "jobs.db", ROOT / "jobs.db"]:
     if path.exists():
         try:
             path.unlink()
