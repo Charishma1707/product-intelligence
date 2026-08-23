@@ -111,7 +111,7 @@ export default function ProductForm({ onResult, onStageChange }) {
     }
   }
 
-  const canSubmit = !loading && mpn.trim()
+  const canSubmit = brand.trim() !== '' && mpn.trim() !== '' && (!strictSchema || providedSchema.trim() !== '')
 
   return (
     <div className="card" style={{ maxWidth: 720, margin: '0 auto' }}>
@@ -325,6 +325,11 @@ export default function ProductForm({ onResult, onStageChange }) {
               onChange={e => setSchema(e.target.value)}
               style={{ resize: 'vertical', minHeight: 52 }}
             />
+            {strictSchema && !providedSchema.trim() && (
+              <div style={{ color: 'var(--color-conf-low)', fontSize: '0.75rem', marginTop: 4 }}>
+                ⚠️ You must provide a custom schema if "Strict Schema" is checked.
+              </div>
+            )}
           </div>
 
           {/* Options row */}
