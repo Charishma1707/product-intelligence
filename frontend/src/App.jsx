@@ -10,18 +10,16 @@ import UserGuideModal from './components/UserGuideModal.jsx'
 import ReviewQueue from './components/ReviewQueue.jsx'
 
 export default function App() {
-  const [tab, setTab] = useState('single')
+  const [tab, setActiveTab] = useState('single')
   const [activeStage, setActiveStage] = useState(null)
   const [result, setResult] = useState(null)
   const [showHITL, setShowHITL] = useState(false)
   const [showGuide, setShowGuide] = useState(false)
   const [stats, setStats] = useState({
     complete: 0,
-    needs_review: 0,
-    searches_avoided: 0,
-    documents_reused: 0,
-    series_hits: 0,
-    unique_series_cached: 0,
+    review: 0,
+    accuracy: 100,
+    cost_saved: 90,
     documents_cached: 0,
   })
 
@@ -29,8 +27,8 @@ export default function App() {
     const fetchStats = async () => {
       try {
         const [jobsRes, metricsRes] = await Promise.all([
-          fetch('http://localhost:8000/jobs?limit=500'),
-          fetch('http://localhost:8000/metrics').catch(() => null)
+          fetch(`${API}/jobs?limit=500`),
+          fetch(`${API}/metrics`).catch(() => null)
         ])
         let complete = 0, review = 0
         if (jobsRes && jobsRes.ok) {
@@ -80,7 +78,7 @@ export default function App() {
   const handleResetApp = async () => {
     if (!window.confirm("Are you sure? This will delete all jobs, downloaded PDFs, knowledge graphs, and databases. This cannot be undone.")) return;
     try {
-      const res = await fetch('http://localhost:8000/reset', { method: 'POST' });
+      const res = await fetch(`${API}/reset`, { method: 'POST' });
       if (res.ok) {
         alert("Pipeline completely reset!");
         window.location.reload();

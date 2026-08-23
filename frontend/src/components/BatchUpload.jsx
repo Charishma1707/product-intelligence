@@ -1,6 +1,6 @@
 import { useState, useRef } from 'react'
 
-const API = 'http://localhost:8000'
+import { API } from '../apiConfig'
 
 function confClass(confidence) {
   if (!confidence && confidence !== 0) return ''

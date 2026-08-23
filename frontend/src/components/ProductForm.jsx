@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react'
 
-const API = 'http://localhost:8000'  // same-origin via Vite proxy
+import { API } from '../apiConfig'
 
 const STAGE_MESSAGES = [
   { stage: 'interpreting', msg: 'Classifying product taxonomy and resolving brand identity…' },

@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react'
 import AgentPromptBar from './AgentPromptBar.jsx'
 import FinalFieldsTable from './FinalFieldsTable.jsx'
 
-const API = 'http://localhost:8000'
+import { API } from '../apiConfig'
 
 function getProvenance(field, causeText, retrieval) {
   if (retrieval === 'CHROMA' || causeText.toLowerCase().includes('pdf') || causeText.toLowerCase().includes('chroma')) {

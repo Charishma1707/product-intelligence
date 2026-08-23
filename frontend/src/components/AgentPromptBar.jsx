@@ -1,6 +1,6 @@
 import { useState } from 'react'
 
-const API = 'http://localhost:8000'
+import { API } from '../apiConfig'
 
 export default function AgentPromptBar({ jobId, onAgentUpdate, currentStage }) {
   const [prompt, setPrompt] = useState('')

@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from 'react'
 
-const API = 'http://localhost:8000'
+import { API } from '../apiConfig'
 
 const STATUS_COLORS = {
   completed:   'conf-high',
