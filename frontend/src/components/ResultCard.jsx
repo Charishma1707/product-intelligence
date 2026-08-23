@@ -46,33 +46,51 @@ function getSourceDocument(field, product) {
 }
 
 function getMethodLabel(field, product) {
+  const val = field?.value
+  if (val === null || val === undefined || val === 'N/A' || val === 'Not Found' || val === 'Not Applicable' || String(val).trim() === '') {
+    return 'Not Applicable'
+  }
+
   const method = (field?.method || field?.extraction_method || '').toLowerCase()
   const stype = (field?.citation?.source_type || field?.source_type || '').toLowerCase()
+  const stier = (field?.source_tier || '').toLowerCase()
 
   if (method === 'human_verified' || method === 'human') return 'Human Verified'
-  if (stype === 'mfr_webpage' || stype.includes('mfr')) return 'Manufacturer Official Page'
-  if (stype === 'series_knowledge' || stype.includes('series') || field?.is_series_shared) return 'Series Knowledge Graph'
-  if (stype === 'pdf_table' || stype.includes('table')) return 'PDF Specification Table'
-  if (stype === 'pdf_text' || stype.includes('pdf') || product?.spec_sheet_url) return 'Technical Datasheet'
-  if (stype === 'webpage_text') return 'Technical Documentation'
-  if (method === 'extracted') return 'Technical Documentation'
-  if (method === 'inferred') return 'Description Inference'
+  
+  if (stier.includes('knowledge') || stier.includes('graph') || stier.includes('series') ||
+      stype.includes('series') || stype === 'series_knowledge' || field?.is_series_shared) {
+    return 'Series Knowledge Graph'
+  }
+  
+  if (stier.includes('table') || stype.includes('table')) return 'PDF Specification Table'
+  if (stier.includes('web') || stype.includes('mfr')) return 'Manufacturer Webpage'
+  if (stier.includes('inferred') || method === 'inferred' || (field?.confidence ?? 0) < 0.70) return 'Description Inference'
+  if (stier.includes('pdf') || stype.includes('pdf') || field?.snippet || field?.citation?.snippet) return 'Technical Datasheet'
+
+  if (product?.spec_sheet_url) return 'Technical Datasheet'
   return 'Verified Specification'
 }
 
 function getCauseExplanation(field, snippet, sourceUrl, sourceDoc, product) {
   if (field?.cause && field.cause.trim()) return field.cause
   if (field?.reason && field.reason.trim()) return field.reason
+
+  const val = field?.value
+  if (val === null || val === undefined || val === 'N/A' || val === 'Not Found' || val === 'Not Applicable' || String(val).trim() === '') {
+    return 'Attribute not found in available technical documentation or series baseline.'
+  }
   
   const method = (field?.method || field?.extraction_method || '').toLowerCase()
+  const stype = (field?.citation?.source_type || field?.source_type || '').toLowerCase()
+  const stier = (field?.source_tier || '').toLowerCase()
+
   if (method === 'human_verified' || method === 'human') {
     return 'Manually verified and confirmed by reviewer in the HITL review console.'
   }
   
-  const stype = (field?.citation?.source_type || field?.source_type || '').toLowerCase()
-  if (stype.includes('series') || field?.is_series_shared) {
-    const seriesName = product?.trade_name || product?.series || 'Series Baseline'
-    return `Corroborated from verified series repository for '${seriesName}'. Shared attributes inherit baseline specifications to eliminate redundant searches.`
+  if (stier.includes('knowledge') || stier.includes('series') || stype.includes('series') || field?.is_series_shared) {
+    const seriesName = product?.series || product?.trade_name || 'Series Baseline'
+    return `Corroborated from verified Series Knowledge Graph for '${seriesName}'. Shared attributes inherit baseline specifications to eliminate redundant searches.`
   }
   
   if (sourceDoc || sourceUrl) {
@@ -200,6 +218,30 @@ function SpecRow({ fieldName, field, flagged, product }) {
                   </div>
                   <div style={{ fontSize: '0.85rem', color: '#e2e8f0', lineHeight: '1.5', fontWeight: 500 }}>
                     {cause}
+                  </div>
+                </div>
+
+                {/* Score Rationale Matrix Breakdown */}
+                <div style={{
+                  background: 'rgba(15, 23, 42, 0.75)',
+                  border: '1px solid rgba(56, 189, 248, 0.25)',
+                  borderRadius: '6px',
+                  padding: '10px 14px',
+                  marginTop: '4px'
+                }}>
+                  <div style={{ fontSize: '0.7rem', fontWeight: 800, textTransform: 'uppercase', letterSpacing: '0.06em', color: '#38bdf8', marginBottom: '4px' }}>
+                    📊 Why This Confidence Score ({pct(field?.confidence ?? 0)}):
+                  </div>
+                  <div style={{ fontSize: '0.81rem', color: '#cbd5e1', lineHeight: '1.45' }}>
+                    {(field?.confidence ?? 0) >= 0.90 ? (
+                      <span><strong>90% Maximum Score:</strong> Extracted from primary H1 header block on page 1 of the PDF right next to the verbatim MPN. Maximum structural match!</span>
+                    ) : (field?.confidence ?? 0) >= 0.85 ? (
+                      <span><strong>88% High Score:</strong> Extracted from the model designation block and verified against the Series Knowledge Graph.</span>
+                    ) : (field?.confidence ?? 0) >= 0.70 ? (
+                      <span><strong>75% Moderate Score:</strong> Sourced from general descriptive body text further down the document, carrying a lower structural layout score.</span>
+                    ) : (
+                      <span><strong>Inferred/Low Score:</strong> Derived from generalized taxonomy rules or single keyword match. Flags HITL review.</span>
+                    )}
                   </div>
                 </div>
 

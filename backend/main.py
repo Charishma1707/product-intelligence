@@ -43,6 +43,11 @@ logging.basicConfig(
 logger = logging.getLogger("main")
 
 app = FastAPI(
+    title="Product Intelligence Pipeline",
+    description="Enriches minimal product info into a structured product record using LangGraph.",
+    version="2.0.0",
+)
+
 import subprocess
 
 @app.post("/reset")
@@ -53,11 +58,6 @@ async def reset_pipeline():
         return {"status": "success", "message": "Pipeline completely reset!"}
     except Exception as e:
         return {"status": "error", "message": str(e)}
-
-    title="Product Intelligence Pipeline",
-    description="Enriches minimal product info into a structured product record using LangGraph.",
-    version="2.0.0",
-)
 
 @app.on_event("startup")
 async def startup_event():

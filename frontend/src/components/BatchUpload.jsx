@@ -1,6 +1,6 @@
 import { useState, useRef } from 'react'
 
-const API = 'https://unilog-backend-api.loca.lt'
+const API = 'http://localhost:8000'
 
 function confClass(confidence) {
   if (!confidence && confidence !== 0) return ''

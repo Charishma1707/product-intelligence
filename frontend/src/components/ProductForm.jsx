@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react'
 
-const API = 'https://unilog-backend-api.loca.lt'  // same-origin via Vite proxy
+const API = 'http://localhost:8000'  // same-origin via Vite proxy
 
 const STAGE_MESSAGES = [
   { stage: 'interpreting', msg: 'Classifying product taxonomy and resolving brand identity…' },

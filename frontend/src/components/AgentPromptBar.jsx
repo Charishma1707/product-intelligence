@@ -1,6 +1,6 @@
 import { useState } from 'react'
 
-const API = 'https://unilog-backend-api.loca.lt'
+const API = 'http://localhost:8000'
 
 export default function AgentPromptBar({ jobId, onAgentUpdate, currentStage }) {
   const [prompt, setPrompt] = useState('')

@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from 'react'
 
-const API = 'https://unilog-backend-api.loca.lt'
+const API = 'http://localhost:8000'
 
 const STATUS_COLORS = {
   completed:   'conf-high',

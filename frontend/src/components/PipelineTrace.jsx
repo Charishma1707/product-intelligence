@@ -1,4 +1,4 @@
-﻿import React from 'react';
+import React from 'react';
 
 export default function PipelineTrace({ logs }) {
   if (!logs || logs.length === 0) return null;
@@ -6,7 +6,7 @@ export default function PipelineTrace({ logs }) {
   return (
     <div className="card" style={{ marginTop: 'var(--space-lg)' }}>
       <div className="card-header">
-        <h2 className="card-title">🔍 Pipeline Execution Trace</h2>
+        <h2 className="card-title">?? Pipeline Execution Trace</h2>
       </div>
       <div className="card-body" style={{ background: '#111827', color: '#e5e7eb', padding: '16px', borderRadius: '0 0 12px 12px', overflowX: 'auto', fontFamily: 'monospace', fontSize: '13px' }}>
         {logs.map((log, i) => (

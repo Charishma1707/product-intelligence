@@ -29,8 +29,8 @@ export default function App() {
     const fetchStats = async () => {
       try {
         const [jobsRes, metricsRes] = await Promise.all([
-          fetch('https://unilog-backend-api.loca.lt/jobs?limit=500'),
-          fetch('https://unilog-backend-api.loca.lt/metrics').catch(() => null)
+          fetch('http://localhost:8000/jobs?limit=500'),
+          fetch('http://localhost:8000/metrics').catch(() => null)
         ])
         let complete = 0, review = 0
         if (jobsRes && jobsRes.ok) {
@@ -80,7 +80,7 @@ export default function App() {
   const handleResetApp = async () => {
     if (!window.confirm("Are you sure? This will delete all jobs, downloaded PDFs, knowledge graphs, and databases. This cannot be undone.")) return;
     try {
-      const res = await fetch('https://unilog-backend-api.loca.lt/reset', { method: 'POST' });
+      const res = await fetch('http://localhost:8000/reset', { method: 'POST' });
       if (res.ok) {
         alert("Pipeline completely reset!");
         window.location.reload();
@@ -111,7 +111,7 @@ export default function App() {
             <div className="logo-icon" style={{ fontWeight: 900, fontSize: '14px', letterSpacing: '-0.5px' }}>UN</div>
             <div>
               <div className="logo-text">Unilog Product Intelligence</div>
-              <div className="logo-sub">Enrichment &amp; Taxonomy Engine</div>
+              <div className="logo-sub">Standardize Part Numbers into Structured Commerce Data</div>
             </div>
           </div>
 
