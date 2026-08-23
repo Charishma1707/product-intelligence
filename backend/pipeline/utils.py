@@ -171,6 +171,9 @@ def _call_ollama(messages: list[dict], response_format=None, temperature: float 
         "messages": messages,
         "temperature": temperature,
         "stream": False,
+        "options": {
+            "num_gpu": 99,  # Offload all layers to GPU if available
+        },
     }
     if response_format and response_format.get("type") == "json_object":
         payload["response_format"] = {"type": "json_object"}
