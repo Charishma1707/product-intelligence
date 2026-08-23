@@ -1,6 +1,6 @@
 import { useState } from 'react'
 
-const API = ''
+const API = 'https://unilog-backend-api.loca.lt'
 
 export default function FinalProductResponse({ product, postApprovalSummary }) {
   const [savingDb, setSavingDb] = useState(false)

@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react'
 import AgentPromptBar from './AgentPromptBar.jsx'
 import FinalFieldsTable from './FinalFieldsTable.jsx'
 
-const API = ''
+const API = 'https://unilog-backend-api.loca.lt'
 
 function getProvenance(field, causeText, retrieval) {
   if (retrieval === 'CHROMA' || causeText.toLowerCase().includes('pdf') || causeText.toLowerCase().includes('chroma')) {

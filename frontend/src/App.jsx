@@ -29,8 +29,8 @@ export default function App() {
     const fetchStats = async () => {
       try {
         const [jobsRes, metricsRes] = await Promise.all([
-          fetch('/jobs?limit=500'),
-          fetch('/metrics').catch(() => null)
+          fetch('https://unilog-backend-api.loca.lt/jobs?limit=500'),
+          fetch('https://unilog-backend-api.loca.lt/metrics').catch(() => null)
         ])
         let complete = 0, review = 0
         if (jobsRes && jobsRes.ok) {
@@ -77,6 +77,21 @@ export default function App() {
     setTimeout(() => document.getElementById('result-card')?.scrollIntoView({ behavior: 'smooth' }), 100)
   }
 
+  const handleResetApp = async () => {
+    if (!window.confirm("Are you sure? This will delete all jobs, downloaded PDFs, knowledge graphs, and databases. This cannot be undone.")) return;
+    try {
+      const res = await fetch('https://unilog-backend-api.loca.lt/reset', { method: 'POST' });
+      if (res.ok) {
+        alert("Pipeline completely reset!");
+        window.location.reload();
+      } else {
+        alert("Failed to reset pipeline.");
+      }
+    } catch (e) {
+      alert("Error resetting pipeline: " + e.message);
+    }
+  }
+
   const TABS = [
     { id: 'single',    label: 'Single Product' },
     { id: 'batch',     label: 'Batch Processing' },
@@ -102,6 +117,13 @@ export default function App() {
 
           {/* Live Metrics + Guide Button */}
           <div style={{ display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap' }}>
+            <button
+              onClick={handleResetApp}
+              className="btn"
+              style={{ marginRight: 4, background: '#ef4444', color: 'white' }}
+            >
+              Reset App Data
+            </button>
             <button
               onClick={() => setShowGuide(true)}
               className="btn btn-primary btn-sm"
