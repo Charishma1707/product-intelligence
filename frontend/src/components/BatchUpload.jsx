@@ -13,7 +13,6 @@ export default function BatchUpload() {
   const [file, setFile] = useState(null)
   const [providedSchema, setProvidedSchema] = useState('')
   const [strictSchema, setStrictSchema] = useState(false)
-  const [forceReview, setForceReview] = useState(false)
   const [loading, setLoading] = useState(false)
   const [results, setResults] = useState(null)
   const [error, setError] = useState(null)
@@ -25,7 +24,7 @@ export default function BatchUpload() {
       setFile(f)
       setError(null)
     } else {
-      setError('Please upload a CSV file.')
+      setError('Please select a valid CSV file.')
     }
   }
 
@@ -48,7 +47,6 @@ export default function BatchUpload() {
       form.append('provided_schema', providedSchema)
     }
     form.append('strict_schema', strictSchema)
-    form.append('force_review', forceReview)
 
     try {
       const res = await fetch(`${API}/enrich/batch`, { 
@@ -78,10 +76,10 @@ export default function BatchUpload() {
   return (
     <div style={{ maxWidth: 900, margin: '0 auto' }}>
       <div className="card">
-        <div className="card-title">Batch Enrichment</div>
+        <div className="card-title">Batch Catalog Ingestion</div>
         <p style={{ marginBottom: 'var(--space-lg)', fontSize: '0.9rem' }}>
-          Upload a CSV with columns: <code style={{ fontFamily: 'var(--font-mono)', color: 'var(--color-accent-1)' }}>brand, mpn, description</code>.
-          Up to 100 products per batch.
+          Upload a CSV file containing columns: <code style={{ fontFamily: 'var(--font-mono)', color: 'var(--color-accent-1)' }}>brand, mpn, description</code>.
+          Processes up to 100 catalog records concurrently.
         </p>
 
         {/* Dropzone */}
@@ -93,16 +91,15 @@ export default function BatchUpload() {
           onDrop={handleDrop}
           onClick={() => inputRef.current?.click()}
         >
-          <div className="dropzone-icon">📂</div>
           {file ? (
             <>
-              <p style={{ color: 'var(--color-conf-high)', fontWeight: 600 }}>✓ {file.name}</p>
-              <small>{(file.size / 1024).toFixed(1)} KB — click to change</small>
+              <p style={{ color: 'var(--color-conf-high)', fontWeight: 600 }}>{file.name}</p>
+              <small>{(file.size / 1024).toFixed(1)} KB — click to replace file</small>
             </>
           ) : (
             <>
-              <p>Drop your CSV file here, or click to browse</p>
-              <small>Supports .csv files up to 100 products</small>
+              <p>Drag and drop a CSV catalog file here, or click to browse</p>
+              <small>Standard CSV format (max 100 rows per batch)</small>
             </>
           )}
           <input
@@ -116,7 +113,7 @@ export default function BatchUpload() {
         </div>
 
         <div className="form-group" style={{ marginTop: 'var(--space-md)' }}>
-          <label className="form-label" htmlFor="batch-schema-input">Custom Schema for Batch (Optional, comma-separated)</label>
+          <label className="form-label" htmlFor="batch-schema-input">Custom Attribute Schema (Optional, comma-separated)</label>
           <textarea
             id="batch-schema-input"
             className="form-input"
@@ -136,28 +133,11 @@ export default function BatchUpload() {
             />
             <strong>Strict Schema Mode</strong>
           </label>
-          
-          <label style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer', fontSize: '0.9rem' }}>
-            <input 
-              type="checkbox" 
-              checked={forceReview} 
-              onChange={e => setForceReview(e.target.checked)} 
-            />
-            <strong>Force Human Review</strong> (Pauses pipeline for each item)
-          </label>
         </div>
 
         {error && (
-          <div style={{
-            background: 'rgba(239,68,68,0.1)',
-            border: '1px solid rgba(239,68,68,0.3)',
-            borderRadius: 'var(--radius-sm)',
-            padding: 'var(--space-sm) var(--space-md)',
-            color: '#ef4444',
-            fontSize: '0.875rem',
-            marginTop: 'var(--space-md)',
-          }}>
-            ⚠ {error}
+          <div className="error-banner" style={{ marginTop: 'var(--space-md)' }}>
+            {error}
           </div>
         )}
 
@@ -168,7 +148,7 @@ export default function BatchUpload() {
             onClick={handleSubmit}
             disabled={!file || loading}
           >
-            {loading ? <><span className="spinner" /> Processing…</> : '⚡ Process Batch'}
+            {loading ? <><span className="spinner" /> Processing Batch…</> : 'Start Batch Processing'}
           </button>
 
           {results && (
@@ -177,7 +157,7 @@ export default function BatchUpload() {
               className="btn btn-secondary"
               onClick={handleDownload}
             >
-              ↓ Download CSV
+              Download Export CSV
             </button>
           )}
         </div>
@@ -188,8 +168,8 @@ export default function BatchUpload() {
         <div style={{ marginTop: 'var(--space-lg)' }}>
           <div style={{ display: 'flex', gap: 'var(--space-md)', flexWrap: 'wrap', marginBottom: 'var(--space-md)' }}>
             {[
-              { label: 'Total', value: results.total, color: 'var(--color-text-primary)' },
-              { label: 'Succeeded', value: results.succeeded, color: 'var(--color-conf-high)' },
+              { label: 'Total Records', value: results.total, color: 'var(--color-text-primary)' },
+              { label: 'Processed', value: results.succeeded, color: 'var(--color-conf-high)' },
               { label: 'Failed', value: results.failed, color: results.failed > 0 ? 'var(--color-conf-low)' : 'var(--color-text-muted)' },
             ].map(stat => (
               <div key={stat.label} className="card" style={{ flex: 1, minWidth: 100, textAlign: 'center', padding: 'var(--space-md)' }}>
@@ -237,8 +217,8 @@ export default function BatchUpload() {
                     </td>
                     <td>
                       {r.status === 'success'
-                        ? <span className="status-success">✓ OK</span>
-                        : <span className="status-failed" title={r.error}>✗ Failed</span>}
+                        ? <span className="status-success">COMPLETE</span>
+                        : <span className="status-failed" title={r.error}>FAILED</span>}
                     </td>
                   </tr>
                 ))}

@@ -23,12 +23,39 @@ from pydantic import BaseModel, Field
 # ---------------------------------------------------------------------------
 
 class SourceType(str, Enum):
+    MFR_WEBPAGE = "mfr_webpage"
+    SERIES_KNOWLEDGE = "series_knowledge"
     WEBPAGE_TEXT = "webpage_text"
     PDF_TEXT = "pdf_text"
     PDF_TABLE = "pdf_table"
     PDF_CHART = "pdf_chart"
-    USER_INPUT = "user_input"
     INFERRED = "inferred"
+    INPUT_DATA = "INPUT_DATA"
+    MANUFACTURER_PAGE = "MANUFACTURER_PAGE"
+    MANUFACTURER_PDF = "MANUFACTURER_PDF"
+    MANUFACTURER_CATALOG = "MANUFACTURER_CATALOG"
+    DISTRIBUTOR = "DISTRIBUTOR"
+    COMPETITOR = "COMPETITOR"
+    CHROMA = "CHROMA"
+    KNOWLEDGE_GRAPH = "KNOWLEDGE_GRAPH"
+    CACHE = "CACHE"
+    LLM_INFERENCE = "LLM_INFERENCE"
+    HUMAN_APPROVED = "HUMAN_APPROVED"
+
+
+# ---------------------------------------------------------------------------
+# FieldStatus — provenance quality of a single extracted field
+# ---------------------------------------------------------------------------
+
+class FieldStatus(str, Enum):
+    """Quality/provenance status for a single extracted field."""
+    VERIFIED   = "VERIFIED"     # MPN found on page + value from manufacturer source
+    SUPPORTED  = "SUPPORTED"    # Value from approved distributor or secondary source
+    INFERRED   = "INFERRED"     # No document evidence; LLM domain-knowledge inference
+    CONFLICT   = "CONFLICT"     # Two sources give different values for this field
+    MISSING    = "MISSING"      # Field not found in any source, value is None
+    PROPAGATED = "PROPAGATED"   # Inherited from a sibling MPN, needs verification
+    NEEDS_REVIEW = "NEEDS_REVIEW"  # Low confidence or flagged by validator
 
 
 # ---------------------------------------------------------------------------
@@ -37,14 +64,12 @@ class SourceType(str, Enum):
 
 class Citation(BaseModel):
     """Exactly where a field value came from."""
-    source_type: SourceType
-    url: str | None = None                          # for webpage_text
-    doc_id: str | None = None                       # UUID of the stored PDF
-    doc_name: str | None = None                     # human-readable filename
-    page_number: int | None = None                  # 1-indexed page within the PDF
-    snippet: str | None = None                      # verbatim quote (webpage_text / pdf_text)
-    table_location: str | None = None               # e.g. "Row 3, Column 'Rated Current'"
-    chart_description: str | None = None            # e.g. "Read from torque-speed curve at 1500 rpm"
+    retrieval_method: str | None = None             # e.g. "CHROMA", "CACHE", "WEB_SEARCH"
+    original_source_type: SourceType | None = None
+    source_url: str | None = None                   
+    document_id: str | None = None                  
+    page: int | None = None                         # 1-indexed page within the PDF
+    evidence: str | None = None                     # verbatim quote (webpage_text / pdf_text)
     similar_products_used: list[str] | None = None  # MPNs used for inference
 
 
@@ -55,10 +80,13 @@ class Citation(BaseModel):
 class FieldValue(BaseModel):
     """A single extracted/inferred specification field with full provenance."""
     value: str | float | int | bool | None
-    confidence: float = Field(ge=0.0, le=1.0)
-    method: str                                     # "extracted" | "inferred" | "human_verified"
-    cause: str                                      # plain-English reason for this confidence
-    citation: Citation
+    confidence: float = Field(default=0.0, ge=0.0, le=1.0)
+    extraction_method: str | None = None            # e.g. "LLM", "REGEX", "HUMAN"
+    status: FieldStatus = FieldStatus.MISSING       # provenance quality label
+    source: Citation | None = None
+    conflict_values: list[str] | None = None        # if CONFLICT: list of differing values seen
+    is_series_shared: bool = False                  # whether this is a shared series attribute
+
 
 
 # ---------------------------------------------------------------------------
@@ -159,9 +187,13 @@ class ProductRecord(BaseModel):
 # ---------------------------------------------------------------------------
 
 class EnrichRequest(BaseModel):
-    brand: str = Field(..., min_length=1, max_length=200)
+    brand: str = Field(default="", max_length=200)
     mpn: str = Field(..., min_length=1, max_length=200)
     description: str = Field(default="", max_length=2000)
+    part_manuf: str | None = None
+    e1_brand: str | None = None
+    unilog_brand: str | None = None
+    dib_brand: str | None = None
     provided_schema: list[str] | None = None
     strict_schema: bool = False
     force_review: bool = False
@@ -197,40 +229,14 @@ class ResolveRequest(BaseModel):
 
 
 class SampleProduct(BaseModel):
-    brand: str
-    mpn: str
-    description: str
+    brand: str = ""
+    mpn: str = ""
+    description: str = ""
+    part_manuf: str = ""
+    e1_brand: str = ""
+    unilog_brand: str = ""
+    dib_brand: str = ""
+    label: str = ""
 
 
-# ---------------------------------------------------------------------------
-# Quick self-test
-# ---------------------------------------------------------------------------
-if __name__ == "__main__":
-    import json
 
-    fv = FieldValue(
-        value="24 VDC",
-        confidence=0.92,
-        method="extracted",
-        cause="Directly read from PDF text on page 1. Verbatim snippet matches source document.",
-        citation=Citation(
-            source_type=SourceType.PDF_TEXT,
-            doc_id="abc-123",
-            doc_name="3RT2015-1BB41.pdf",
-            page_number=1,
-            snippet="Control Coil Voltage: 24 V DC (operating coil)",
-        ),
-    )
-
-    record = ProductRecord(
-        brand="Siemens",
-        mpn="3RT2015-1BB41",
-        category="Contactor",
-        description="Siemens SIRIUS 3RT2015-1BB41 Power Contactor",
-        specifications={"coil_voltage": fv},
-        overall_confidence=0.92,
-        status="complete",
-    )
-
-    print(json.dumps(record.model_dump(), indent=2, default=str))
-    print("\n[PASS] schema.py self-test passed.")

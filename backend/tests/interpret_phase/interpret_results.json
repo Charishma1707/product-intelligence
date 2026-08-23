@@ -1,0 +1,281 @@
+[
+  {
+    "input": {
+      "brand": "Siemens",
+      "mpn": "3RT2015-1BB41",
+      "description": "Contactor 3-pole 7A 24VDC coil",
+      "raw_row": {
+        "brand": "Siemens",
+        "mpn": "3RT2015-1BB41",
+        "description": "Contactor 3-pole 7A 24VDC coil"
+      }
+    },
+    "output": {
+      "resolved_brand": "Siemens",
+      "manufacturer_name": "Siemens",
+      "category": "Electrical",
+      "subcategory": "Contactors 3-Pole 7A 24VDC",
+      "classpath": "Electrical > Electrical Components > Contactors > Contactors 3-Pole 7A 24VDC",
+      "unspsc": "83111101",
+      "expected_fields": [
+        "series",
+        "voltage",
+        "current",
+        "coil_voltage",
+        "number_of_poles"
+      ],
+      "taxonomy_confidence": 0.9,
+      "status": "in_progress"
+    }
+  },
+  {
+    "input": {
+      "brand": "Schneider Electric",
+      "mpn": "LC1D09BD",
+      "description": "TeSys D contactor 3-pole 9A 24VDC coil",
+      "raw_row": {
+        "brand": "Schneider Electric",
+        "mpn": "LC1D09BD",
+        "description": "TeSys D contactor 3-pole 9A 24VDC coil"
+      }
+    },
+    "output": {
+      "resolved_brand": "Schneider Electric",
+      "manufacturer_name": "Schneider Electric",
+      "category": "Electrical",
+      "subcategory": "TeSys D Contactors 3-Pole 24VDC",
+      "classpath": "Electrical > Control > Contactors > TeSys D Contactors 3-Pole 24VDC",
+      "unspsc": "83111101",
+      "expected_fields": [
+        "series",
+        "voltage",
+        "current",
+        "coil_voltage",
+        "number_of_poles",
+        "operating_temperature",
+        "operating_frequency",
+        "protection_type",
+        "rms_current",
+        "rms_voltage",
+        "rms_power",
+        "rms_current_rating",
+        "rms_voltage_rating"
+      ],
+      "taxonomy_confidence": 0.9,
+      "status": "in_progress"
+    }
+  },
+  {
+    "input": {
+      "brand": "SKF",
+      "mpn": "6205-2RS1",
+      "description": "Deep groove ball bearing 25x52x15mm sealed",
+      "raw_row": {
+        "brand": "SKF",
+        "mpn": "6205-2RS1",
+        "description": "Deep groove ball bearing 25x52x15mm sealed"
+      }
+    },
+    "output": {
+      "resolved_brand": "SKF",
+      "manufacturer_name": "SKF",
+      "category": "Bearings",
+      "subcategory": "Ball Bearings > Deep Groove Ball Bearings > 25x52x15mm Sealed",
+      "classpath": "Bearings > Ball Bearings > Deep Groove Ball Bearings > 25x52x15mm Sealed",
+      "unspsc": "82111201",
+      "expected_fields": [
+        "series",
+        "inner_diameter",
+        "outer_diameter",
+        "width",
+        "type_of_bearing",
+        "number_of_balls",
+        "type_of_cage",
+        "type_of_lubrication",
+        "material",
+        "operating_temperature_range",
+        "load_rating",
+        "speed_rating"
+      ],
+      "taxonomy_confidence": 0.9,
+      "status": "in_progress"
+    }
+  },
+  {
+    "input": {
+      "brand": "FAG",
+      "mpn": "6204-2Z",
+      "description": "Ball bearing 20x47x14mm shielded",
+      "raw_row": {
+        "brand": "FAG",
+        "mpn": "6204-2Z",
+        "description": "Ball bearing 20x47x14mm shielded"
+      }
+    },
+    "output": {
+      "resolved_brand": "FAG",
+      "manufacturer_name": "FAG",
+      "category": "Industrial_Machinery_and_Equipments",
+      "subcategory": "Bearings_and_Bearing_Assemblies",
+      "classpath": "Industrial_Machinery_and_Equipments > Bearings_and_Bearing_Assemblies > Ball_Bearings",
+      "unspsc": "95041100",
+      "expected_fields": [
+        "series",
+        "inner_diameter",
+        "outer_diameter",
+        "width",
+        "material",
+        "operating_temperature_range",
+        "operating_velocity",
+        "load_capacity",
+        "operating_frequency",
+        "operating_pressure",
+        "operating_vibration",
+        "operating_sound_level"
+      ],
+      "taxonomy_confidence": 0.9,
+      "status": "in_progress"
+    }
+  },
+  {
+    "input": {
+      "brand": "Omron",
+      "mpn": "E2E-X5ME1",
+      "description": "Inductive proximity sensor 5mm sensing distance NPN",
+      "raw_row": {
+        "brand": "Omron",
+        "mpn": "E2E-X5ME1",
+        "description": "Inductive proximity sensor 5mm sensing distance NPN"
+      }
+    },
+    "output": {
+      "resolved_brand": "Omron",
+      "manufacturer_name": "Omron",
+      "category": "Electronics",
+      "subcategory": "E2E-X5ME1 Inductive Proximity Sensor",
+      "classpath": "Electronics > Sensors > Inductive Proximity Sensors > E2E-X5ME1 Inductive Proximity Sensor",
+      "unspsc": "82111101",
+      "expected_fields": [
+        "series",
+        "voltage",
+        "operating_temperature",
+        "sensing_distance",
+        "output_type",
+        "power_supply_voltage",
+        "operating_humidity",
+        "frequency_response",
+        "response_time",
+        "hysteresis",
+        "repeatability",
+        "non_linearity",
+        "accuracy"
+      ],
+      "taxonomy_confidence": 0.9,
+      "status": "in_progress"
+    }
+  },
+  {
+    "input": {
+      "brand": "Pepperl+Fuchs",
+      "mpn": "NBB5-18GM50-E0",
+      "description": "Inductive sensor M18 5mm NPN normally open",
+      "raw_row": {
+        "brand": "Pepperl+Fuchs",
+        "mpn": "NBB5-18GM50-E0",
+        "description": "Inductive sensor M18 5mm NPN normally open"
+      }
+    },
+    "output": {
+      "resolved_brand": "Pepperl+Fuchs",
+      "manufacturer_name": "Pepperl+Fuchs",
+      "category": "Electronics",
+      "subcategory": "NPN Inductive Sensor M18 5mm",
+      "classpath": "Electronics > Sensors > Inductive Sensors > NPN Inductive Sensor M18 5mm",
+      "unspsc": "82111199",
+      "expected_fields": [
+        "series",
+        "voltage",
+        "operating_temperature",
+        "diameter",
+        "material",
+        "operating_frequency",
+        "power_supply",
+        "operating_humidity",
+        "operating_pressure",
+        "accuracy",
+        "response_time",
+        "repeatability"
+      ],
+      "taxonomy_confidence": 0.9,
+      "status": "in_progress"
+    }
+  },
+  {
+    "input": {
+      "brand": "ABB",
+      "mpn": "AF09-30-10-13",
+      "description": "Contactor 3-pole 9A 100-250V AC/DC coil",
+      "raw_row": {
+        "brand": "ABB",
+        "mpn": "AF09-30-10-13",
+        "description": "Contactor 3-pole 9A 100-250V AC/DC coil"
+      }
+    },
+    "output": {
+      "resolved_brand": "ABB",
+      "manufacturer_name": "ABB",
+      "category": "Electrical",
+      "subcategory": "Contactors 3-Pole 9A 100-250V AC/DC",
+      "classpath": "Electrical > Electrical Components > Contactors > Contactors 3-Pole 9A 100-250V AC/DC",
+      "unspsc": "83041101",
+      "expected_fields": [
+        "series",
+        "voltage",
+        "current",
+        "coil_voltage",
+        "number_of_poles",
+        "type",
+        "application"
+      ],
+      "taxonomy_confidence": 0.9,
+      "status": "in_progress"
+    }
+  },
+  {
+    "input": {
+      "brand": "Honeywell",
+      "mpn": "922AA1WA-A4",
+      "description": "Limit switch roller lever actuator SPDT",
+      "raw_row": {
+        "brand": "Honeywell",
+        "mpn": "922AA1WA-A4",
+        "description": "Limit switch roller lever actuator SPDT"
+      }
+    },
+    "output": {
+      "resolved_brand": "Honeywell",
+      "manufacturer_name": "Honeywell",
+      "category": "Automation",
+      "subcategory": "Honeywell 922AA1WA-A4 Limit Switch Roller Lever Actuator SPDT",
+      "classpath": "Automation > Actuators > Limit Switch Actuators > Honeywell 922AA1WA-A4 Limit Switch Roller Lever Actuator SPDT",
+      "unspsc": "82111101",
+      "expected_fields": [
+        "series",
+        "voltage",
+        "current",
+        "operating_temperature",
+        "operating_pressure",
+        "material",
+        "actuation_force",
+        "travel_distance",
+        "operating_frequency",
+        "power_supply",
+        "number_of_contacts",
+        "contact_type",
+        "mounting_type"
+      ],
+      "taxonomy_confidence": 0.9,
+      "status": "in_progress"
+    }
+  }
+]

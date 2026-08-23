@@ -130,6 +130,8 @@ def _store_chunks(product_id: str, chunks: list[dict]):
             "product_id": product_id,
             "source_type": c.get("source_type", "unknown"),
             "doc_hash": doc_hash,
+            "mpn_verified": bool(c.get("mpn_verified", False)),
+            "source_tier": int(c.get("source_tier", 3)),
         }
         if c.get("url"): meta["url"] = c.get("url")
         if c.get("doc_id"): meta["doc_id"] = c.get("doc_id")
@@ -202,8 +204,32 @@ def _process_pdf_file(pdf_path: Path, doc_id: str, doc_name: str) -> list[dict]:
     return chunks
 
 
-def _fetch_url(url: str) -> list[dict]:
-    """Fetch URL and process as HTML or PDF."""
+def _fetch_url(url: str, brand: str = "") -> list[dict]:
+    """Fetch URL and process as HTML or PDF, using SHA-256 cache for PDFs."""
+    
+    # ── Phase 3b: Cross-product URL dedup ──
+    if _collection:
+        try:
+            cached = _collection.get(where={"url": url})
+            if cached and cached.get("ids"):
+                logger.info("[Retriever] URL already cached in ChromaDB (reusing): %s", url)
+                chunks = []
+                for i in range(len(cached["ids"])):
+                    meta = cached["metadatas"][i]
+                    chunks.append({
+                        "text": cached["documents"][i],
+                        "source_type": meta.get("source_type"),
+                        "url": url,
+                        "doc_id": meta.get("doc_id"),
+                        "doc_name": meta.get("doc_name"),
+                        "page_number": meta.get("page_number"),
+                        "image_base64": meta.get("image_base64"),
+                        "is_mfr_domain": meta.get("is_mfr_domain", False)
+                    })
+                return chunks
+        except Exception as e:
+            logger.debug("[Retriever] Cache check failed for %s: %s", url, e)
+
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/124.0.0.0 Safari/537.36"
     }
@@ -214,16 +240,44 @@ def _fetch_url(url: str) -> list[dict]:
     raw_bytes = resp.content
 
     if "pdf" in content_type or url.lower().endswith(".pdf"):
-        doc_id = str(uuid.uuid4())
+        doc_hash = hashlib.sha256(raw_bytes).hexdigest()
+        
+        from pipeline.knowledge_store import get_document_by_hash, save_document_metadata, mark_document_processed
+        existing_doc = get_document_by_hash(doc_hash)
+        
+        if existing_doc and existing_doc["processed"]:
+            logger.info("[Retriever] PDF already processed (SHA-256 match): %s", doc_hash)
+            # Fetch chunks from Chroma using doc_id = doc_hash
+            if _collection:
+                cached = _collection.get(where={"doc_id": doc_hash})
+                if cached and cached.get("ids"):
+                    chunks = []
+                    for i in range(len(cached["ids"])):
+                        meta = cached["metadatas"][i]
+                        chunks.append({
+                            "text": cached["documents"][i],
+                            "source_type": meta.get("source_type"),
+                            "url": meta.get("url", url),
+                            "doc_id": doc_hash,
+                            "doc_name": meta.get("doc_name"),
+                            "page_number": meta.get("page_number"),
+                            "image_base64": meta.get("image_base64"),
+                            "is_mfr_domain": meta.get("is_mfr_domain", False)
+                        })
+                    return chunks
+
+        doc_id = doc_hash
         doc_name = url.split("/")[-1]
         if not doc_name.endswith(".pdf"):
             doc_name += ".pdf"
         pdf_path = _PDF_STORAGE_DIR / f"{doc_id}.pdf"
         pdf_path.write_bytes(raw_bytes)
 
+        save_document_metadata(doc_id, url, brand, doc_hash, str(pdf_path), processed=False)
         chunks = _process_pdf_file(pdf_path, doc_id, doc_name)
         for c in chunks:
             c["url"] = url
+        mark_document_processed(doc_hash)
         return chunks
     else:
         return _process_webpage(raw_bytes, url)
@@ -498,18 +552,18 @@ def _search_web(brand: str, mpn: str, max_results: int = 8, description: str = "
                 _candidate_patterns = [
                     f"https://www.{mfr_domain}/products/{mpn}",
                     f"https://www.{mfr_domain}/products/{_mpn_slug}",
-                    f"https://www.{mfr_domain}/search?q={mpn}",
+                    f"https://www.{mfr_domain}/p/{_mpn_slug}",
                     f"https://{mfr_domain}/products/{mpn}",
-                    f"https://{mfr_domain}/search?q={mpn}",
+                    f"https://{mfr_domain}/p/{_mpn_slug}",
                 ]
                 for _candidate in _candidate_patterns:
                     if _verify_url_alive(_candidate):
                         mfr_url = _candidate
                         all_urls.append(mfr_url)
-                        logger.info("[Retriever] MFR URL found via pattern: %s", mfr_url)
+                        logger.info("[Retriever] MFR URL found via verified product pattern: %s", mfr_url)
                         break
                 if not mfr_url:
-                    logger.info("[Retriever] No constructed URL resolved, falling through to search")
+                    logger.info("[Retriever] No verified direct product URL resolved, leaving mfr_url for search discovery")
 
     def _add_url(url: str) -> bool:
         """Add URL if it passes all filters. Returns True if added."""
@@ -648,25 +702,21 @@ def retrieve(brand: str, mpn: str, description: str, category: str) -> dict:
     # 2. Check ChromaDB cache
     chunks = _get_cached_chunks(product_id)
     if chunks:
-        logger.info("Found %d cached chunks in ChromaDB for %s", len(chunks), product_id)
-        # Re-run oracle to recover mfr_url even from cache (fast LLM call only)
-        oracle = _llm_resolve_mfr(brand, mpn, description, category)
-        cached_mfr_url: str | None = None
-        if oracle.get("mfr_url_hint") and oracle.get("confidence", 0) >= 0.7:
-            hint = oracle["mfr_url_hint"]
-            if _verify_url_alive(hint):
-                cached_mfr_url = hint
-            elif oracle.get("mfr_domain"):
-                # Construct guaranteed fallback
-                cached_mfr_url = f"https://www.{oracle['mfr_domain']}/search?q={mpn}"
-        elif oracle.get("mfr_domain"):
-            cached_mfr_url = f"https://www.{oracle['mfr_domain']}/search?q={mpn}"
+        logger.info("Found %d cached chunks in ChromaDB for %s — skipping LLM Oracle & web calls", len(chunks), product_id)
+        # Extract mfr_url and assets directly from cached chunk metadata (zero-latency, zero-cost)
+        cached_mfr_url = next((c["url"] for c in chunks if c.get("is_mfr_domain") and c.get("url")), None)
+        if not cached_mfr_url:
+            cached_mfr_url = next((c["url"] for c in chunks if c.get("url")), None)
+
+        cached_spec_sheet = next((c["url"] for c in chunks if c.get("url", "").lower().endswith(".pdf")), None)
+        cached_image = next((c.get("image_base64") for c in chunks if c.get("image_base64")), None)
+
         return {
             "chunks": chunks,
             "mfr_url": cached_mfr_url,
-            "ref_urls": [],
+            "ref_urls": list(set(c["url"] for c in chunks if c.get("url") and c["url"] != cached_mfr_url)),
             "product_image_url": None,
-            "spec_sheet_url": None,
+            "spec_sheet_url": cached_spec_sheet,
             "sds_url": None,
             "manual_url": None,
             "installation_url": None,
@@ -696,27 +746,22 @@ def retrieve(brand: str, mpn: str, description: str, category: str) -> dict:
         # Resolved mfr_domain from oracle — used throughout fetch loop for accurate tagging
         resolved_mfr_domain: str | None = search_result.get("resolved_mfr_domain")
 
-        # ── Guaranteed MFR URL fallback ───────────────────────────────────────
-        # If web search didn't find mfr_url, construct one from the resolved domain.
+        # ── Verified MFR URL fallback ───────────────────────────────────────
+        # If web search didn't find mfr_url, only accept verified direct product URLs
         if not mfr_url and resolved_mfr_domain:
-            # Try the oracle hint URL first, then common patterns
             _mpn_slug = mpn.replace(" ", "-").replace("/", "-")
             _fallback_candidates = [
-                f"https://www.{resolved_mfr_domain}/search?searchtext={mpn}",
-                f"https://www.{resolved_mfr_domain}/search?q={mpn}",
                 f"https://www.{resolved_mfr_domain}/products/{mpn}",
                 f"https://www.{resolved_mfr_domain}/products/{_mpn_slug}",
-                f"https://{resolved_mfr_domain}/search?q={mpn}",
+                f"https://www.{resolved_mfr_domain}/p/{_mpn_slug}",
+                f"https://{resolved_mfr_domain}/products/{mpn}",
+                f"https://{resolved_mfr_domain}/p/{_mpn_slug}",
             ]
             for _fc in _fallback_candidates:
                 if _verify_url_alive(_fc):
                     mfr_url = _fc
-                    logger.info("[Retriever] MFR URL via constructed fallback: %s", mfr_url)
+                    logger.info("[Retriever] MFR URL verified via direct product page: %s", mfr_url)
                     break
-            # Last resort: use first candidate even without verification
-            if not mfr_url:
-                mfr_url = _fallback_candidates[0]
-                logger.info("[Retriever] MFR URL using unverified fallback: %s", mfr_url)
 
         # Build ref_urls: ONLY mfr-domain PDFs + strictly approved distributors
         # Never include random sites, ecommerce, or unknown domains
@@ -814,23 +859,54 @@ def retrieve(brand: str, mpn: str, description: str, category: str) -> dict:
                     else:
                         logger.debug("[Retriever] Skipping asset extraction for non-mfr page: %s", url)
 
-                fetched_chunks = _fetch_url(url)
+                fetched_chunks = _fetch_url(url, brand)
                 real_chunks = [
                     c for c in fetched_chunks
                     if len(c.get("text", "").strip()) >= 50 or c.get("image_base64")
                 ]
                 if real_chunks:
-                    # Tag chunks with mfr domain flag — use oracle domain for accuracy
+                    # Tag chunks with mfr domain flag and MPN verification
                     is_mfr = (
                         is_manufacturer_domain(url, brand)
                         or bool(resolved_mfr_domain and resolved_mfr_domain in urlparse(url).netloc.lower())
                     )
+                    
+                    # Normalize MPN for flexible matching (e.g. 6205-2RS1 vs 6205 2RS1)
+                    clean_mpn = re.sub(r"[^A-Za-z0-9]", "", mpn).upper()
+                    
                     for c in real_chunks:
+                        chunk_text = c.get("text", "")
+                        clean_text = re.sub(r"[^A-Za-z0-9]", "", chunk_text).upper()
+                        
+                        chunk_mpn_verified = (
+                            (mpn.upper() in chunk_text.upper()) or 
+                            (clean_mpn and clean_mpn in clean_text) or
+                            (url == mpn_verified_url)
+                        )
+                        
+                        # Compute source tier (1 = MFR Exact, 2 = MFR General, 3 = Distributor Exact, 4 = Other)
+                        if is_mfr and chunk_mpn_verified:
+                            source_tier = 1
+                        elif is_mfr:
+                            source_tier = 2
+                        elif is_approved_distributor(url) and chunk_mpn_verified:
+                            source_tier = 3
+                        elif is_approved_distributor(url):
+                            source_tier = 4
+                        else:
+                            source_tier = 5
+                            
                         c["is_mfr_domain"] = is_mfr
-                        c["mpn_verified"] = (url == mpn_verified_url)
+                        c["mpn_verified"] = chunk_mpn_verified
+                        c["source_tier"] = source_tier
+                        
                     chunks.extend(real_chunks)
-                    logger.info("[Retriever] Got %d chunks from %s (mfr=%s, mpn_verified=%s)",
-                                len(real_chunks), url, is_mfr, url == mpn_verified_url)
+                    logger.info(
+                        "[Retriever] Got %d chunks from %s (mfr=%s, mpn_verified=%s, best_tier=%s)",
+                        len(real_chunks), url, is_mfr,
+                        any(c.get("mpn_verified") for c in real_chunks),
+                        min(c.get("source_tier", 5) for c in real_chunks)
+                    )
                     if len(chunks) >= 8:
                         break
                 elif fetched_chunks:
@@ -851,6 +927,7 @@ def retrieve(brand: str, mpn: str, description: str, category: str) -> dict:
         "chunks": chunks,
         "mfr_url": mfr_url,
         "ref_urls": ref_urls,
+        "mpn_verified": any(c.get("mpn_verified", False) for c in chunks),
         "product_image_url": product_image_url,
         "spec_sheet_url": spec_sheet_url,
         "sds_url": sds_url,

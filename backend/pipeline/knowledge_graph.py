@@ -59,6 +59,16 @@ def ingest_validated_product(brand: str, mpn: str, category: str, specs: dict[st
         G.add_node(category_id, type="Category", name=category)
     G.add_edge(product_id, category_id, type="BELONGS_TO")
 
+    # Upsert Series Node & Link (if series is found in specs)
+    series_val = None
+    if "series" in specs and getattr(specs["series"], "value", None):
+        series_val = str(specs["series"].value).strip()
+        if series_val and series_val.lower() not in ("none", "null", "n/a"):
+            series_id = f"Series:{brand}:{series_val}"
+            if not G.has_node(series_id):
+                G.add_node(series_id, type="Series", brand=brand, name=series_val)
+            G.add_edge(product_id, series_id, type="PART_OF_SERIES")
+
     # Upsert Specs
     for spec_name, spec_data in specs.items():
         val_attr = getattr(spec_data, "value", None)

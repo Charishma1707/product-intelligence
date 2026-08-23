@@ -11,9 +11,12 @@ from langgraph.graph import StateGraph, END
 
 from pipeline.state import PipelineState
 from pipeline.nodes import (
-    node_interpret,
+    node_identity,
+    node_taxonomy,
     node_retrieve,
+    node_series,
     node_extract,
+    node_desc_infer,
     node_validate,
     node_review_gate,
     node_copywrite,
@@ -41,19 +44,25 @@ def route_after_review(state: PipelineState) -> str:
 def build_graph() -> StateGraph:
     builder = StateGraph(PipelineState)
 
-    builder.add_node("interpret", node_interpret)
+    builder.add_node("identity", node_identity)
+    builder.add_node("taxonomy", node_taxonomy)
     builder.add_node("retrieve", node_retrieve)
+    builder.add_node("series", node_series)
     builder.add_node("extract", node_extract)
+    builder.add_node("desc_infer", node_desc_infer)
     builder.add_node("validate", node_validate)
     builder.add_node("review_gate", node_review_gate)
     builder.add_node("copywrite", node_copywrite)
     builder.add_node("finalize", node_finalize)
 
-    builder.set_entry_point("interpret")
+    builder.set_entry_point("identity")
 
-    builder.add_conditional_edges("interpret", route_after_node, {"end": END, "next": "retrieve"})
-    builder.add_conditional_edges("retrieve", route_after_node, {"end": END, "next": "extract"})
-    builder.add_conditional_edges("extract", route_after_node, {"end": END, "next": "validate"})
+    builder.add_conditional_edges("identity", route_after_node, {"end": END, "next": "taxonomy"})
+    builder.add_conditional_edges("taxonomy", route_after_node, {"end": END, "next": "retrieve"})
+    builder.add_conditional_edges("retrieve", route_after_node, {"end": END, "next": "series"})
+    builder.add_conditional_edges("series", route_after_node, {"end": END, "next": "extract"})
+    builder.add_conditional_edges("extract", route_after_node, {"end": END, "next": "desc_infer"})
+    builder.add_conditional_edges("desc_infer", route_after_node, {"end": END, "next": "validate"})
     builder.add_conditional_edges("validate", route_after_node, {"end": END, "next": "review_gate"})
     
     builder.add_conditional_edges("review_gate", route_after_review, {

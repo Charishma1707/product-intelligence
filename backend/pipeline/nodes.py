@@ -24,6 +24,7 @@ from pipeline.interpreter import interpret
 from pipeline.retriever import retrieve
 from pipeline.extractor import extract
 from pipeline.validator import validate
+from pipeline.knowledge_store import get_canonical_brand, save_brand_alias
 
 logger = logging.getLogger(__name__)
 
@@ -47,197 +48,68 @@ _UNIVERSAL_FIELDS = [
 # Manufacturer name cleaner
 # ---------------------------------------------------------------------------
 
-# ---------------------------------------------------------------------------
-# Static distributor → true OEM brand map
-# ---------------------------------------------------------------------------
-
-# When Part_Manuf is a distributor code, this maps the distributor to the real OEM
-# for products typically sourced from that distributor. Extend as needed.
-_DISTRIBUTOR_TO_OEM: dict[str, str] = {
-    # Common appliance distributors
-    "appliance dealers cooperative": "Frigidaire",  # APPDE = distributor for Frigidaire/Electrolux
-    "appde": "Frigidaire",
-    # Industrial distributors — brand is inferred from description, not hardcoded
-    "jam industrial supply": None,   # brand extracted from description
-    "fastenal": None,
-    "grainger": None,
-    "zoro": None,
-    "mcmaster": None,
-    "motion industries": None,
-}
-
-# Known brand aliases / normalizations (brand as found → official name)
-_BRAND_NORMALIZATIONS: dict[str, str] = {
-    "frigidaire": "Frigidaire",
-    "whirlpool": "Whirlpool",
-    "ge": "GE Appliances",
-    "ge appliances": "GE Appliances",
-    "bosch": "Bosch",
-    "siemens": "Siemens",
-    "3m": "3M",
-    "freud": "Freud",
-    "diablo": "Diablo",
-    "dewalt": "DEWALT",
-    "milwaukee": "Milwaukee Tool",
-    "makita": "Makita",
-    "stanley": "Stanley",
-    "norton": "Norton Abrasives",
-    "moen": "Moen",
-    "delta": "Delta Faucet",
-    "kohler": "Kohler",
-    "american standard": "American Standard",
-    "rheem": "Rheem",
-    "lennox": "Lennox",
-    "carrier": "Carrier",
-    "honeywell": "Honeywell",
-    "eaton": "Eaton",
-    "schneider": "Schneider Electric",
-    "abb": "ABB",
-    "allen-bradley": "Allen-Bradley",
-    "rockwell": "Rockwell Automation",
-    "skf": "SKF",
-    "nsk": "NSK",
-    "fag": "FAG",
-    "timken": "Timken",
-}
-
-
 def _clean_manufacturer(raw: str) -> str:
     """
     Clean the Part_Manuf field into a proper manufacturer name.
-    'Freud Inc (2435)' → 'Freud Inc'
-    'Jam Industrial Supply LLC (JAMIN)' → 'Jam Industrial Supply LLC'
-    'Appliance Dealers Cooperative (APPDE)' → 'Appliance Dealers Cooperative'
     """
     if not raw:
         return ""
-    # Remove trailing (CODE) patterns
-    clean = re.sub(r"\s*\([^)]*\)\s*$", "", raw.strip()).strip()
-    return clean
-
-
-def _is_likely_mpn(token: str) -> bool:
-    """Heuristic: True if token looks like an MPN (alphanumeric mix, often with digits)."""
-    if not token:
-        return False
-    # MPNs typically: 4+ chars, contain at least one digit, may have special chars
-    has_digit = any(c.isdigit() for c in token)
-    has_alpha = any(c.isalpha() for c in token)
-    is_mixed = has_digit and has_alpha and len(token) >= 4
-    # Also flag pure uppercase alphabetic short codes like "APPDE"
-    is_pure_upper_code = token.isupper() and len(token) <= 8 and not " " in token
-    return is_mixed or is_pure_upper_code
-
-
-def _resolve_true_brand(clean_manuf: str, description: str, mpn: str = "") -> str:
-    """
-    Heuristic to find the true OEM brand if Part_Manuf is actually a distributor.
-
-    Strategy:
-    1. Check static distributor→OEM map first (most reliable).
-    2. If no static match, scan description for known brand names.
-    3. If no brand found in description, avoid using MPN as brand.
-    """
-    if not clean_manuf:
-        return ""
-
-    lower_manuf = clean_manuf.lower()
-
-    # ── Step 1: Static lookup ───────────────────────────────────────────────
-    for dist_key, oem in _DISTRIBUTOR_TO_OEM.items():
-        if dist_key in lower_manuf:
-            if oem:
-                logger.info("[BrandResolver] Static map: '%s' → '%s'", clean_manuf, oem)
-                return oem
-            # oem is None → need to extract from description
-            break
-
-    # ── Step 2: Check if this looks like a distributor at all ──────────────
-    distributor_keywords = ["supply", "industrial", "dealer", "distributor",
-                            "cooperative", "wholesale", "corporation", "company",
-                            "trading", "sales", "group", "holdings", "enterprises"]
-    is_distributor = any(k in lower_manuf for k in distributor_keywords)
-
-    # ── Step 3: Scan description for a known brand name ────────────────────
-    if description:
-        desc_lower = description.lower()
-        # Check known brand normalizations
-        for brand_key, brand_val in _BRAND_NORMALIZATIONS.items():
-            if brand_key in desc_lower:
-                logger.info("[BrandResolver] Brand found in description: '%s'", brand_val)
-                return brand_val
-
-        if is_distributor:
-            # Grab first word of description — but ONLY if it's not the MPN
-            words = description.split()
-            if words:
-                first_word = words[0]
-                if first_word.upper() == mpn.upper() or _is_likely_mpn(first_word):
-                    logger.info("[BrandResolver] First word is MPN/code, skipping: '%s'", first_word)
-                    # Try second word
-                    if len(words) > 1 and not _is_likely_mpn(words[1]):
-                        candidate = words[1]
-                        if candidate.isalpha() and len(candidate) > 2:
-                            logger.info("[BrandResolver] Using second word as brand: '%s'", candidate)
-                            return candidate
-                else:
-                    # First word is a real word, likely a brand
-                    if first_word.replace("-", "").isalpha() and len(first_word) > 2:
-                        logger.info("[BrandResolver] Using first word as brand: '%s'", first_word)
-                        return first_word
-
-    return clean_manuf
+    # Regex removed as per user request to not strip ()
+    return raw.strip()
 
 
 # ---------------------------------------------------------------------------
-# NODE: Interpret
+# NODE: Identity
 # ---------------------------------------------------------------------------
 
-def node_interpret(state: PipelineState) -> dict:
-    logger.info("[Node] Interpret: %s %s", state["brand"], state["mpn"])
+def node_identity(state: PipelineState) -> dict:
+    logger.info("[Node] Identity: %s %s", state.get("brand"), state.get("mpn"))
     logs = state.get("logs", [])
     
-    # ── Identity Chain Step 1 & 2: Clean and resolve true brand ──
     raw_manuf = state.get("input_part_manuf") or state.get("brand") or ""
     clean_manuf = _clean_manufacturer(raw_manuf)
-    mpn = state["mpn"]
-    description = state.get("description", "")
     
-    # If the provided brand is unbranded/placeholder, or if we suspect it's a distributor
-    current_brand = state["brand"]
-    true_brand = current_brand
-    
-    if current_brand in ("-- Unbranded --", "", "-- No Unilog Brand --") or (
-        clean_manuf and current_brand == raw_manuf
-    ):
-        resolved = _resolve_true_brand(clean_manuf, description, mpn=mpn)
-        if resolved:
-            true_brand = resolved
+    return {
+        "manufacturer_name": clean_manuf, 
+        "status": "in_progress",
+        "logs": logs + [{
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "node": "identity",
+            "message": f"Cleaned input manufacturer: {clean_manuf}"
+        }]
+    }
 
-    logger.info("Resolved brand identity: %s -> %s", current_brand, true_brand)
+# ---------------------------------------------------------------------------
+# NODE: Taxonomy
+# ---------------------------------------------------------------------------
 
+def node_taxonomy(state: PipelineState) -> dict:
+    logger.info("[Node] Taxonomy: %s %s", state["brand"], state["mpn"])
+    logs = state.get("logs", [])
     try:
         res = interpret(
-            true_brand,
+            state["brand"],
             state["mpn"],
             state["description"],
             state.get("provided_schema"),
             state.get("strict_schema", False)
         )
         return {
-            "brand": true_brand, # Overwrite state with true brand for downstream nodes
-            "manufacturer_name": clean_manuf, # Keep the cleaned original for reference
+            "brand": res.true_brand,
+            "manufacturer_name": res.true_manufacturer,
             "category": res.category,
             "subcategory": res.subcategory,
             "classpath": res.classpath,
             "unspsc": res.unspsc,
             "expected_fields": res.expected_fields,
+            "taxonomy_leaf": res.subcategory,
+            "taxonomy_confidence": 0.9 if not res.used_fallback else 0.4,
             "status": "in_progress",
             "logs": logs + [{
                 "timestamp": datetime.now(timezone.utc).isoformat(),
-                "node": "interpret",
+                "node": "taxonomy",
                 "message": (
-                    f"Resolved Brand: {true_brand} | "
+                    f"Resolved Brand: {res.true_brand} | "
                     f"Classpath: {res.classpath} | "
                     f"UNSPSC: {res.unspsc} | "
                     f"Fields: {len(res.expected_fields)}"
@@ -247,8 +119,35 @@ def node_interpret(state: PipelineState) -> dict:
     except Exception as e:
         return {
             "status": "failed", "error": str(e),
-            "logs": logs + [{"timestamp": datetime.now(timezone.utc).isoformat(), "node": "interpret", "message": f"Error: {e}"}]
+            "logs": logs + [{"timestamp": datetime.now(timezone.utc).isoformat(), "node": "taxonomy", "message": f"Error: {e}"}]
         }
+
+# ---------------------------------------------------------------------------
+# NODE: Series
+# ---------------------------------------------------------------------------
+
+def node_series(state: PipelineState) -> dict:
+    logger.info("[Node] Series: %s %s", state["brand"], state["mpn"])
+    logs = state.get("logs", [])
+    
+    from pipeline.extractor import _extract_series
+    
+    series_val = _extract_series(
+        state["brand"],
+        state["mpn"],
+        state["description"],
+        state["category"],
+        state.get("raw_documents", [])
+    )
+    
+    return {
+        "series": series_val,
+        "logs": logs + [{
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "node": "series",
+            "message": f"Found series: {series_val}" if series_val else "No series found."
+        }]
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -274,11 +173,13 @@ def node_retrieve(state: PipelineState) -> dict:
             if u not in source_urls:
                 source_urls.append(u)
 
+        mpn_verified = result.get("mpn_verified", False)
         return {
             "raw_documents": chunks,
             "mfr_url": mfr_url,
             "ref_urls": ref_urls,
             "source_urls": source_urls,
+            "mpn_verified": mpn_verified,
             "product_image_url": result.get("product_image_url"),
             "alternate_image_urls": result.get("alternate_image_urls", []),
             "spec_sheet_url": result.get("spec_sheet_url"),
@@ -294,11 +195,10 @@ def node_retrieve(state: PipelineState) -> dict:
                 "message": (
                     f"Chunks: {len(chunks)} | "
                     f"MFR URL: {mfr_url or 'not found'} | "
+                    f"MPN Verified: {'✓ Yes' if mpn_verified else '✗ No'} | "
                     f"Ref URLs: {len(ref_urls)} | "
                     f"Image: {bool(result.get('product_image_url'))} | "
-                    f"Spec Sheet: {bool(result.get('spec_sheet_url'))} | "
-                    f"SDS: {bool(result.get('sds_url'))} | "
-                    f"Manual: {bool(result.get('manual_url'))}"
+                    f"Spec Sheet: {bool(result.get('spec_sheet_url'))}"
                 )
             }]
         }
@@ -373,21 +273,28 @@ def node_validate(state: PipelineState) -> dict:
     logs = state.get("logs", [])
     try:
         specs, overall, flagged = validate(
-            state.get("extracted_fields", {}), state.get("raw_documents", [])
+            state.get("extracted_fields", {}),
+            state.get("raw_documents", []),
+            category=state.get("category", ""),
+            description=state.get("description", ""),
         )
 
         from pipeline.knowledge_graph import ingest_validated_product
         ingest_validated_product(state["brand"], state["mpn"], state["category"], specs)
 
-        provenance = {
-            k: {
-                "value": v.value,
-                "source": v.source_type if hasattr(v, "source_type") else getattr(v, "method", "unknown"),
-                "url": getattr(v, "url", None),
-                "snippet": getattr(v, "snippet", None)[:100] if getattr(v, "snippet", None) else None,
-            }
-            for k, v in specs.items() if v.value is not None
-        }
+        provenance = {}
+        for k, v in specs.items():
+            val = v.get("value") if isinstance(v, dict) else getattr(v, "value", None)
+            if val is not None:
+                stype = v.get("source_type", v.get("method", "unknown")) if isinstance(v, dict) else (getattr(v, "source_type", None) or getattr(v, "method", "unknown"))
+                u = v.get("url") if isinstance(v, dict) else getattr(v, "url", None)
+                snip = v.get("snippet") if isinstance(v, dict) else getattr(v, "snippet", None)
+                provenance[k] = {
+                    "value": val,
+                    "source": stype,
+                    "url": u,
+                    "snippet": snip[:100] if snip else None,
+                }
         logger.info("[Validate] Provenance: %d fields with sources", len(provenance))
 
         return {
@@ -418,10 +325,52 @@ def node_validate(state: PipelineState) -> dict:
 
 def node_review_gate(state: PipelineState) -> dict:
     overall = state.get("overall_confidence", 0.0)
+    tax_conf = state.get("taxonomy_confidence", 1.0)
     force = state.get("force_review", False)
-    logger.info("[Node] Review Gate (conf=%.2f, force=%s)", overall, force)
-    if force or overall < 0.0:
-        return {"status": "needs_review"}
+    flagged = state.get("flagged_for_review", [])
+    
+    logger.info("[Node] Review Gate (overall=%.2f, tax=%.2f, flagged=%d, force=%s)", 
+                overall, tax_conf, len(flagged), force)
+    
+    needs_review = force or overall < 0.8 or tax_conf < 0.8 or len(flagged) > 0
+    
+    if needs_review:
+        review_items = []
+        specs = state.get("specifications", {})
+        
+        for fname in flagged:
+            val = specs.get(fname)
+            if val:
+                v_val = val.get("value") if isinstance(val, dict) else getattr(val, "value", None)
+                v_conf = val.get("confidence", 0.0) if isinstance(val, dict) else getattr(val, "confidence", 0.0)
+                v_cause = val.get("cause", "") if isinstance(val, dict) else getattr(val, "cause", "")
+                review_items.append({
+                    "type": "field",
+                    "field": fname,
+                    "value": v_val,
+                    "confidence": v_conf,
+                    "cause": v_cause,
+                })
+        
+        # Add taxonomy review if needed
+        if tax_conf < 0.8:
+            review_items.append({
+                "type": "taxonomy",
+                "category": state.get("category"),
+                "subcategory": state.get("subcategory"),
+                "confidence": tax_conf,
+                "cause": "Taxonomy classification was low confidence (fallback used)."
+            })
+            
+        return {
+            "status": "needs_review",
+            "human_review_items": review_items,
+            "logs": state.get("logs", []) + [{
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+                "node": "review_gate",
+                "message": f"Paused for human review. {len(review_items)} items flagged."
+            }]
+        }
     return {}
 
 
@@ -440,8 +389,15 @@ def node_copywrite(state: PipelineState) -> dict:
     clean_manuf = state.get("manufacturer_name", "") or _clean_manufacturer(state.get("input_part_manuf") or "")
 
     specs = state.get("specifications", {})
-    all_facts = {k: v.value for k, v in specs.items() if v.value is not None}
-    validated_facts = {k: v for k, v in all_facts.items() if specs[k].confidence >= 0.75}
+    all_facts = {}
+    validated_facts = {}
+    for k, v in specs.items():
+        val = v.get("value") if isinstance(v, dict) else getattr(v, "value", None)
+        conf = v.get("confidence", 0.0) if isinstance(v, dict) else getattr(v, "confidence", 0.0)
+        if val is not None:
+            all_facts[k] = val
+            if conf >= 0.75:
+                validated_facts[k] = val
 
     raw_docs = state.get("raw_documents", [])
     raw_context = "\n\n".join(
@@ -598,3 +554,492 @@ def node_finalize(state: PipelineState) -> dict:
         updates["status"] = "complete"
 
     return updates
+
+
+# ---------------------------------------------------------------------------
+# NODE: HITL Supervisor Routing Agent
+# ---------------------------------------------------------------------------
+
+def node_hitl_supervisor(state: PipelineState, corrections: dict, reviewer: str = "human") -> dict:
+    """
+    Intelligent LangGraph Supervisor Node for Human-in-the-Loop.
+    Inspects human feedback and decides which node to route to next:
+    - If Brand or MPN changed -> Routes to 'node_retrieve' to rediscover official manufacturer documentation.
+    - If Sourcing URLs changed -> Routes to 'node_retrieve' to ingest documents into ChromaDB, then 'node_extract'.
+    - If Taxonomy / Category changed -> Routes to 'node_taxonomy' to recalculate UNSPSC and category schema.
+    - If Attributes / Specifications changed -> Routes to 'node_validate', persists series knowledge, then 'node_copywrite'.
+    - If Descriptions changed -> Routes to 'node_finalize'.
+    """
+    logs = state.get("logs", [])
+    current_status = state.get("status", "needs_review")
+
+    has_identity = any(k in corrections for k in ("brand", "mpn", "manufacturer_name"))
+    has_urls = any(k in corrections for k in ("mfr_url", "spec_sheet_url", "manual_url", "installation_url", "sds_url", "product_image_url"))
+    has_copywriting = any(k in corrections for k in ("invoice_desc", "short_desc", "long_desc", "marketing_description"))
+
+    # 1. Identity change -> Route to Node 2 (retrieve)
+    if current_status == "needs_review_identity" or has_identity:
+        for k in ("brand", "mpn", "manufacturer_name"):
+            if k in corrections:
+                state[k] = corrections[k]
+
+        logger.info("[Supervisor Agent] Identity confirmed/modified. Routing LangGraph -> 'node_retrieve'.")
+        logs.append({
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "node": "hitl_supervisor",
+            "message": "Supervisor Agent routed to 'node_retrieve' for document sourcing."
+        })
+        state["logs"] = logs
+        retrieved = node_retrieve(state)
+        state.update(retrieved)
+        state["status"] = "needs_review_retrieval"
+        return state
+
+    # 2. Sourcing URLs change -> Route to Node 3 (taxonomy + series + extract)
+    if current_status == "needs_review_retrieval" or has_urls:
+        for f in ("mfr_url", "spec_sheet_url", "manual_url", "installation_url", "warranty_url", "catalog_url", "energy_guide_url", "sds_url", "product_image_url"):
+            if f in corrections:
+                state[f] = corrections[f]
+
+        logger.info("[Supervisor Agent] Sourcing URLs verified. Routing LangGraph -> 'node_taxonomy' -> 'node_series' -> 'node_extract'.")
+        logs.append({
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "node": "hitl_supervisor",
+            "message": "Supervisor Agent routed to 'node_taxonomy' and 'node_extract' for attribute extraction."
+        })
+        state["logs"] = logs
+        state.update(node_taxonomy(state))
+        state.update(node_series(state))
+        state.update(node_extract(state))
+        state["status"] = "needs_review_extraction"
+        return state
+
+    # 3. Extraction / Attribute verification -> Route to Node 4 (validate + copywrite + finalize)
+    if current_status in ("needs_review_extraction", "needs_review") or not has_copywriting:
+        specs = state.get("specifications", {})
+        brand = state.get("brand", "")
+        series = state.get("series") or (specs.get("series", {}).get("value") if isinstance(specs.get("series"), dict) else getattr(specs.get("series"), "value", None))
+        pid = state.get("product_id") or state.get("job_id")
+
+        from pipeline.knowledge_store import save_human_review, save_series_knowledge, increment_metric, save_attribute_alias
+        from pipeline.extractor import is_series_shared
+
+        for fname, cval in corrections.items():
+            if fname in specs:
+                old_val = specs[fname].get("value") if isinstance(specs[fname], dict) else getattr(specs[fname], "value", None)
+                if isinstance(specs[fname], dict):
+                    specs[fname]["value"] = cval
+                    specs[fname]["confidence"] = 1.0
+                    specs[fname]["method"] = "human_verified"
+                    specs[fname]["cause"] = f"Verified and corrected by reviewer ({reviewer})."
+                else:
+                    specs[fname].value = cval
+                    specs[fname].confidence = 1.0
+                    specs[fname].method = "human_verified"
+                    specs[fname].cause = f"Verified and corrected by reviewer ({reviewer})."
+
+                save_human_review(pid, fname, str(old_val), str(cval), f"approved_by_{reviewer}")
+
+                if old_val and cval and str(old_val).strip().lower() != str(cval).strip().lower():
+                    save_attribute_alias(str(old_val), str(cval))
+
+                if series and is_series_shared(fname):
+                    save_series_knowledge(
+                        manufacturer=brand,
+                        series=str(series),
+                        attribute=fname,
+                        value=str(cval),
+                        scope="series",
+                        confidence=1.0,
+                        source="human_verified"
+                    )
+                    increment_metric("series_hits", 1)
+            elif fname in ("category", "subcategory", "unspsc"):
+                state[fname] = cval
+
+        state["specifications"] = specs
+
+        logger.info("[Supervisor Agent] Attributes verified. Routing LangGraph -> 'node_validate' -> 'node_copywrite' -> 'node_finalize'.")
+        logs.append({
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "node": "hitl_supervisor",
+            "message": "Supervisor Agent routed to 'node_validate' and 'node_copywrite'."
+        })
+        state["logs"] = logs
+        state.update(node_validate(state))
+        state.update(node_copywrite(state))
+        state.update(node_finalize(state))
+        state["status"] = "needs_review_final"
+        return state
+
+    # 4. Final Copywriting approved -> Route to Stage 5 (needs_review_delivery)
+    if current_status == "needs_review_final":
+        for k, v in corrections.items():
+            state[k] = v
+        state["status"] = "needs_review_delivery"
+        logger.info("[Supervisor Agent] Copywriting approved. Routing LangGraph -> 'needs_review_delivery' (Stage 5: Final Delivery Fields).")
+        logs.append({
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "node": "hitl_supervisor",
+            "message": "Supervisor Agent routed to Stage 5: Final Delivery Fields Table."
+        })
+        state["logs"] = logs
+        return state
+
+    # 5. Stage 5 Delivery Fields approved -> Post-approval persistence & Complete
+    for k, v in corrections.items():
+        state[k] = v
+    persist_res = node_post_approval_persist(state, reviewer)
+    state.update(persist_res)
+    state["status"] = "complete"
+    logger.info("[Supervisor Agent] Final delivery fields approved. Post-approval learning complete. Workflow COMPLETE.")
+    logs.append({
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "node": "hitl_supervisor",
+        "message": "Supervisor Agent finalized enrichment and persisted all knowledge to DB & Knowledge Graph."
+    })
+    state["logs"] = logs
+    return state
+
+
+# ---------------------------------------------------------------------------
+# NODE: Description Inference (Regex + LLM abbreviation expansion)
+# ---------------------------------------------------------------------------
+
+# Stage-to-field mapping for implicit confidence boost
+_STAGE_FIELD_SCOPE: dict[int, list] = {
+    1: ["brand", "mpn", "manufacturer_name"],
+    2: ["mfr_url", "spec_sheet_url", "manual_url", "installation_url", "sds_url",
+        "product_image_url", "warranty_url", "catalog_url", "energy_guide_url"],
+    3: [],   # Populated dynamically from specs keys
+    4: ["invoice_desc", "short_desc", "long_desc", "mobile_desc", "retail_desc",
+        "marketing_description", "item_features", "trade_name", "product_name",
+        "standards_approvals"],
+    5: ["upc", "ean", "gtin", "unspsc", "warranty", "list_price", "selling_qty",
+        "selling_uom", "standard_packaging_info", "length", "length_uom",
+        "height", "height_uom", "width", "width_uom", "weight", "weight_uom",
+        "volume", "volume_uom", "product_image_url", "spec_sheet_url", "sds_url",
+        "manual_url", "installation_url", "warranty_url", "catalog_url",
+        "energy_guide_url", "country_of_origin", "discontinued"],
+}
+
+
+def apply_implicit_confidence_boost(
+    state: PipelineState, stage_num: int, corrections: dict, reviewer: str
+) -> tuple[dict, list]:
+    """
+    When a human advances a stage without editing any values, boost confidence
+    for all fields in that stage's scope by +0.15 (capped at 1.0).
+    Records each boost in human_reviews with decision='implicit_accept_stage_N'.
+    Returns (updated_state, list_of_boosted_field_names).
+    """
+    from pipeline.knowledge_store import save_human_review
+    specs = state.get("specifications", {})
+    scope = _STAGE_FIELD_SCOPE.get(stage_num, [])
+
+    # For stage 3, scope is all spec fields
+    if stage_num == 3:
+        scope = list(specs.keys())
+
+    changed_keys = set(corrections.keys())
+    boosted = []
+
+    for fname in scope:
+        if fname in changed_keys:
+            continue  # Human explicitly changed this — skip
+        if fname not in specs:
+            continue
+
+        spec = specs[fname]
+        current_conf = (spec.get("confidence", 0.0) if isinstance(spec, dict)
+                        else getattr(spec, "confidence", 0.0))
+        new_conf = min(1.0, current_conf + 0.15)
+
+        boost_note = (f" | Implicitly accepted by human at Stage {stage_num} "
+                      f"review without modification (confidence +0.15).")
+        if isinstance(spec, dict):
+            specs[fname]["confidence"] = new_conf
+            specs[fname]["cause"] = (spec.get("cause", "") or "") + boost_note
+        else:
+            specs[fname].confidence = new_conf
+
+        pid = state.get("product_id") or state.get("job_id", "")
+        save_human_review(
+            pid, fname,
+            str(current_conf), str(new_conf),
+            f"implicit_accept_stage_{stage_num}_{reviewer}"
+        )
+        boosted.append(fname)
+
+    state["specifications"] = specs
+    return state, boosted
+
+
+def node_desc_infer(state: PipelineState) -> dict:
+    """
+    Scan the input description for shorthand abbreviations using:
+      Phase 1 — Static + DB-learned regex dictionary (desc_abbr_dict.py)
+      Phase 2 — LLM fallback for unknown UPPERCASE tokens
+
+    Merges inferred values into extracted_fields only where confidence < 0.8.
+    Stores desc_inferred_aliases {abbr → canonical} in state for later DB save.
+    """
+    from pipeline.desc_abbr_dict import DESC_ABBR_MAP, load_db_abbreviations
+
+    description = state.get("description", "")
+    extracted = dict(state.get("extracted_fields", {}))
+    logs = state.get("logs", [])
+
+    if not description:
+        return {"extracted_fields": extracted, "desc_inferred_aliases": {}, "logs": logs}
+
+    # Merge static + DB-learned patterns
+    merged_map = {**DESC_ABBR_MAP, **load_db_abbreviations()}
+
+    inferred: dict[str, dict] = {}
+    desc_inferred_aliases: dict[str, str] = {}
+
+    # ── Phase 1: Regex scan ─────────────────────────────────────────────────
+    for pattern, meta in merged_map.items():
+        try:
+            m = re.search(pattern, description, re.IGNORECASE)
+        except re.error:
+            continue
+        if not m:
+            continue
+
+        # Resolve capture group placeholders in value template
+        canonical_val = meta["value"]
+        for i, grp in enumerate(m.groups(), 1):
+            if grp:
+                canonical_val = canonical_val.replace(f"{{{i}}}", grp)
+
+        fname = meta["field"]
+        abbr_label = meta.get("abbr_label", m.group(0))
+        # Resolve placeholder in abbr_label too
+        for i, grp in enumerate(m.groups(), 1):
+            if grp:
+                abbr_label = abbr_label.replace(f"{{{i}}}", grp)
+
+        # Only infer if field not already confidently extracted
+        existing = extracted.get(fname)
+        existing_conf = 0.0
+        if existing is not None:
+            existing_conf = (existing.get("confidence", 0.0) if isinstance(existing, dict)
+                             else getattr(existing, "confidence", 0.0))
+
+        if existing_conf < 0.8:
+            inferred[fname] = {
+                "value": canonical_val,
+                "confidence": 0.65,
+                "method": "llm_inferred_from_description",
+                "cause": (f"Inferred from abbreviation '{abbr_label}' in product "
+                          f"description ({abbr_label} = {canonical_val})"),
+                "abbr_source": abbr_label,
+                "source_type": "desc_inferred",
+            }
+            desc_inferred_aliases[abbr_label] = canonical_val
+
+        # Handle companion UOM field
+        if "uom_field" in meta and "uom_value" in meta:
+            uom_fname = meta["uom_field"]
+            uom_existing = extracted.get(uom_fname)
+            uom_conf = 0.0
+            if uom_existing:
+                uom_conf = (uom_existing.get("confidence", 0.0) if isinstance(uom_existing, dict)
+                            else getattr(uom_existing, "confidence", 0.0))
+            if uom_conf < 0.8:
+                inferred[uom_fname] = {
+                    "value": meta["uom_value"],
+                    "confidence": 0.65,
+                    "method": "llm_inferred_from_description",
+                    "cause": (f"UOM inferred from '{abbr_label}' abbreviation in description"),
+                    "abbr_source": abbr_label,
+                    "source_type": "desc_inferred",
+                }
+
+    # ── Phase 2: LLM fallback for unknown UPPERCASE tokens ──────────────────
+    offline = os.getenv("OFFLINE_DEMO", "false").lower() == "true"
+    if not offline:
+        # Find unexplained uppercase 2-5 letter tokens
+        all_upper = set(re.findall(r'\b[A-Z]{2,5}\b', description))
+        known = set(desc_inferred_aliases.keys()) | {
+            "MPN", "LED", "USA", "ADA", "GE", "LG", "3M", "LP", "OC",
+            "PVC", "NPT", "DKO", "AVI", "NI", "BN", "CH", "SS", "BK", "WH",
+        }
+        unknown_tokens = [t for t in all_upper if t not in known]
+
+        if unknown_tokens:
+            prompt = (
+                f'Product description: "{description}"\n'
+                f"Unknown shorthand codes found: {unknown_tokens}\n"
+                "For each code that represents a product attribute (material, color, size, "
+                "voltage, finish, etc.), return JSON:\n"
+                '{"results": [{"abbreviation": "XX", "field_name": "field", '
+                '"canonical_value": "value", "reason": "..."}]}\n'
+                "Return empty results array if none apply. "
+                "Only return real industrial/product attributes."
+            )
+            try:
+                resp = generate_with_retry(
+                    messages=[{"role": "user", "content": prompt}],
+                    temperature=0.1
+                )
+                parsed = parse_json_response(resp)
+                for item in parsed.get("results", []):
+                    fname = item.get("field_name", "")
+                    abbr = item.get("abbreviation", "")
+                    cval = item.get("canonical_value", "")
+                    if fname and abbr and cval:
+                        existing_conf = 0.0
+                        ex = extracted.get(fname)
+                        if ex:
+                            existing_conf = (ex.get("confidence", 0.0) if isinstance(ex, dict)
+                                            else getattr(ex, "confidence", 0.0))
+                        if existing_conf < 0.8:
+                            inferred[fname] = {
+                                "value": cval,
+                                "confidence": 0.55,
+                                "method": "llm_inferred_from_description",
+                                "cause": (f"LLM inferred: '{abbr}' in description → {cval}. "
+                                          f"{item.get('reason', '')}"),
+                                "abbr_source": abbr,
+                                "source_type": "desc_inferred",
+                            }
+                            desc_inferred_aliases[abbr] = cval
+            except Exception as e:
+                logger.warning("[DescInfer] LLM fallback failed: %s", e)
+
+    # Merge inferred into extracted_fields (only where conf < 0.8)
+    for fname, fdata in inferred.items():
+        existing = extracted.get(fname)
+        existing_conf = 0.0
+        if existing:
+            existing_conf = (existing.get("confidence", 0.0) if isinstance(existing, dict)
+                            else getattr(existing, "confidence", 0.0))
+        if existing_conf < 0.8:
+            extracted[fname] = fdata
+
+    inferred_count = len([f for f in inferred if f in extracted])
+    logger.info("[DescInfer] %d fields inferred from %d abbreviations",
+                inferred_count, len(desc_inferred_aliases))
+
+    return {
+        "extracted_fields": extracted,
+        "desc_inferred_aliases": desc_inferred_aliases,
+        "logs": logs + [{
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "node": "desc_infer",
+            "message": (
+                f"Description inference: {inferred_count} fields inferred from "
+                f"{len(desc_inferred_aliases)} abbreviations "
+                f"({', '.join(list(desc_inferred_aliases.keys())[:5])}{'...' if len(desc_inferred_aliases) > 5 else ''})"
+            )
+        }]
+    }
+
+
+# ---------------------------------------------------------------------------
+# NODE: Post-Approval Persistence Agent
+# ---------------------------------------------------------------------------
+
+def node_post_approval_persist(state: PipelineState, reviewer: str = "human") -> dict:
+    """
+    Runs automatically after Stage 5 human accepts the final product.
+    Persists all learning artifacts:
+      1. Abbreviation aliases → attribute_aliases + desc_abbreviations tables
+      2. Series-shared attrs  → series_knowledge (confidence = 1.0)
+      3. Unique product attrs → product_attributes table + knowledge graph
+      4. Increment metrics
+    Returns post_approval_summary dict for the Final Product Response view.
+    """
+    from pipeline.knowledge_store import (
+        save_attribute_alias, save_desc_abbreviation,
+        save_product_attribute, boost_series_attribute_confidence,
+        save_series_knowledge, increment_metric
+    )
+    from pipeline.extractor import is_series_shared
+    from pipeline.knowledge_graph import ingest_validated_product
+
+    brand = state.get("brand", "")
+    mpn = state.get("mpn", "")
+    category = state.get("category", "")
+    specs = state.get("specifications", {})
+    desc_aliases = state.get("desc_inferred_aliases", {})
+
+    # Resolve series
+    series = state.get("series") or None
+    series_spec = specs.get("series")
+    if not series and series_spec:
+        series = (series_spec.get("value") if isinstance(series_spec, dict)
+                  else getattr(series_spec, "value", None))
+
+    aliases_saved = 0
+    series_boosted = 0
+    unique_saved = 0
+
+    # ── Step 1: Abbreviation aliases ────────────────────────────────────────
+    for abbr, canonical in desc_aliases.items():
+        try:
+            save_attribute_alias(abbr, canonical)
+            save_desc_abbreviation(abbr, canonical, "")
+            aliases_saved += 1
+        except Exception as e:
+            logger.warning("[PostApproval] Failed to save alias %s→%s: %s", abbr, canonical, e)
+
+    # ── Step 2 + 3: Series boost & unique attribute storage ─────────────────
+    for fname, fval_obj in specs.items():
+        val = (fval_obj.get("value") if isinstance(fval_obj, dict)
+               else getattr(fval_obj, "value", None))
+        conf = (fval_obj.get("confidence", 0.0) if isinstance(fval_obj, dict)
+                else getattr(fval_obj, "confidence", 0.0))
+        if val is None:
+            continue
+
+        try:
+            if series and is_series_shared(fname):
+                boost_series_attribute_confidence(brand, series, fname, str(val))
+                series_boosted += 1
+            else:
+                save_product_attribute(brand, mpn, fname, str(val), conf,
+                                       "human_verified", reviewer)
+                unique_saved += 1
+        except Exception as e:
+            logger.warning("[PostApproval] Failed to persist %s: %s", fname, e)
+
+    # Ingest full validated product into knowledge graph
+    try:
+        ingest_validated_product(brand, mpn, category, specs)
+    except Exception as e:
+        logger.warning("[PostApproval] KG ingest failed: %s", e)
+
+    # ── Step 4: Metrics ──────────────────────────────────────────────────────
+    try:
+        increment_metric("human_approvals", 1)
+        if aliases_saved:
+            increment_metric("aliases_learned", aliases_saved)
+    except Exception as e:
+        logger.warning("[PostApproval] Metrics update failed: %s", e)
+
+    summary = {
+        "aliases_saved": aliases_saved,
+        "series_boosted": series_boosted,
+        "unique_attrs_saved": unique_saved,
+        "reviewer": reviewer,
+    }
+    logger.info("[PostApproval] Complete: aliases=%d series=%d unique=%d",
+                aliases_saved, series_boosted, unique_saved)
+
+    return {
+        "post_approval_summary": summary,
+        "status": "complete",
+        "logs": state.get("logs", []) + [{
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "node": "post_approval_persist",
+            "message": (
+                f"Post-approval learning: {aliases_saved} aliases saved, "
+                f"{series_boosted} series attrs boosted, "
+                f"{unique_saved} unique attrs stored."
+            )
+        }]
+    }

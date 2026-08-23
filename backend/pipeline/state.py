@@ -20,11 +20,23 @@ class PipelineState(TypedDict, total=False):
     strict_schema: bool
     force_review: bool
     
-    # Node 1: Interpret
+    # MVP Identity & Cache
+    mpn_verified: bool
+    mpn_confidence: float
+    cache_hit: bool
+    
+    # Node 1: Interpret / Taxonomy
     category: str
     subcategory: str | None
     classpath: str | None
+    taxonomy_leaf: str | None
+    taxonomy_confidence: float
     expected_fields: list[str]
+    
+    # MVP Series Identification
+    series: str | None
+    series_confidence: float
+    series_found_in_cache: bool
     
     # Node 2: Retrieve
     raw_documents: list[dict]  # list of chunks
@@ -47,6 +59,7 @@ class PipelineState(TypedDict, total=False):
     # Node 4: Validate
     specifications: dict[str, FieldValue]
     flagged_for_review: list[str]
+    human_review_items: list[dict]
     overall_confidence: float
 
     # Node 5: Copywrite
@@ -111,3 +124,9 @@ class PipelineState(TypedDict, total=False):
     status: str  # "in_progress" | "needs_review" | "complete" | "failed"
     error: str | None
     logs: list[dict]  # Trace logs for UI
+
+    # Description inference artifacts (populated by node_desc_infer)
+    desc_inferred_aliases: dict[str, str]  # {abbreviation: canonical_value}
+
+    # Post-approval learning summary (populated by node_post_approval_persist)
+    post_approval_summary: dict  # {aliases_saved, series_boosted, unique_attrs_saved}

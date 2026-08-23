@@ -10,12 +10,12 @@ const STATUS_COLORS = {
   failed:      'conf-low',
 }
 
-const STATUS_ICONS = {
-  completed:   '✓',
-  validated:   '✓',
-  hitl_paused: '⏸',
-  running:     '⟳',
-  failed:      '✗',
+const STATUS_LABELS = {
+  completed:   'Complete',
+  validated:   'Validated',
+  hitl_paused: 'Needs Review',
+  running:     'Running',
+  failed:      'Failed',
 }
 
 export default function JobsMonitor({ onLoadJob }) {
@@ -59,9 +59,9 @@ export default function JobsMonitor({ onLoadJob }) {
 
   const FILTERS = [
     { value: '',            label: 'All' },
-    { value: 'completed',   label: '✓ Completed' },
-    { value: 'hitl_paused', label: '⏸ HITL Paused' },
-    { value: 'failed',      label: '✗ Failed' },
+    { value: 'completed',   label: 'Completed' },
+    { value: 'hitl_paused', label: 'Needs Review' },
+    { value: 'failed',      label: 'Failed' },
   ]
 
   return (
@@ -86,14 +86,14 @@ export default function JobsMonitor({ onLoadJob }) {
               onClick={fetchJobs}
               disabled={loading}
             >
-              {loading ? <span className="spinner" /> : '↻'} Refresh
+              {loading ? <span className="spinner" /> : ''} Refresh
             </button>
           </div>
         </div>
 
         {error && (
-          <div style={{ background: 'rgba(239,68,68,0.1)', border: '1px solid rgba(239,68,68,0.3)', borderRadius: 'var(--radius-sm)', padding: 'var(--space-sm) var(--space-md)', color: '#ef4444', marginBottom: 'var(--space-md)' }}>
-            ⚠ {error}
+          <div className="error-banner" style={{ marginBottom: 'var(--space-md)' }}>
+            {error}
           </div>
         )}
 
@@ -125,7 +125,7 @@ export default function JobsMonitor({ onLoadJob }) {
                     <td style={{ fontFamily: 'var(--font-mono)', color: 'var(--color-accent-1)' }}>{job.mpn}</td>
                     <td>
                       <span className={`conf-badge ${STATUS_COLORS[job.status] || ''}`}>
-                        {STATUS_ICONS[job.status] || '?'} {job.status}
+                        {STATUS_LABELS[job.status] || job.status}
                       </span>
                     </td>
                     <td>
@@ -144,7 +144,7 @@ export default function JobsMonitor({ onLoadJob }) {
                         className={`btn btn-sm ${job.status === 'hitl_paused' ? 'btn-primary' : 'btn-ghost'}`}
                         onClick={() => handleLoadJob(job.job_id)}
                       >
-                        {job.status === 'hitl_paused' ? '🧑‍💻 Review' : '👁 View'}
+                        {job.status === 'hitl_paused' ? 'Review' : 'View'}
                       </button>
                     </td>
                   </tr>

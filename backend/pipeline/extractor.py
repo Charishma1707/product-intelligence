@@ -17,9 +17,200 @@ from typing import Any
 from pydantic import BaseModel, Field
 
 from pipeline.utils import generate_with_retry, parse_json_response
-from pipeline.taxonomy import get_category_attributes
 
 logger = logging.getLogger(__name__)
+
+# ---------------------------------------------------------------------------
+# Attribute Classification: Series-Shared vs Variant-Specific
+# ---------------------------------------------------------------------------
+
+VARIANT_SPECIFIC_FIELDS = {
+    "grit", "diameter", "disc_size", "inner_diameter", "outer_diameter", 
+    "width", "length", "height", "depth", "weight", "volume", 
+    "cable_length", "sensing_distance", "bore_diameter",
+    "coil_voltage", "rated_current", "rated_voltage", "power_rating", 
+    "operating_voltage", "switching_frequency", "breaking_capacity",
+    "quantity", "selling_qty", "selling_uom", "list_price", 
+    "upc", "ean", "gtin", "part_number", "mpn", "alternate_part_number", 
+    "model", "sku", "sku_my_part_number"
+}
+
+SERIES_SHARED_FIELDS = {
+    "series", "trade_name", "backing_material", "backing_type", 
+    "abrasive_technology", "abrasive_material", "grain_type", 
+    "housing_material", "material", "enclosure_type", "ip_rating", 
+    "shielded_unshielded", "mounting_type", "connection_type", 
+    "housing_shape", "contact_configuration", "operating_temperature_range", 
+    "operating_temperature", "certifications", "standards_approvals", 
+    "prop_65", "warranty", "country_of_origin", "utilization_category", 
+    "sensor_type", "output_type", "type_of_bearing", "type_of_lubrication"
+}
+
+def is_variant_specific(field_name: str) -> bool:
+    """Return True if an attribute is variant-specific and must NOT be blindly inherited from series."""
+    f = field_name.lower().strip()
+    if f in VARIANT_SPECIFIC_FIELDS:
+        return True
+    if any(k in f for k in ("diameter", "width", "length", "height", "voltage", "current", "grit", "size", "rpm", "kn", "qty", "price")):
+        return True
+    return False
+
+def is_series_shared(field_name: str) -> bool:
+    """Return True if an attribute is shared across all products in the same series."""
+    f = field_name.lower().strip()
+    if f in SERIES_SHARED_FIELDS:
+        return True
+    if any(k in f for k in ("material", "rating", "approval", "temp", "type", "warranty", "origin", "enclosure", "backing", "technology")):
+        return True
+    return not is_variant_specific(field_name)
+
+
+# ---------------------------------------------------------------------------
+# ChromaDB attribute-specific RAG helper
+# ---------------------------------------------------------------------------
+
+def _query_chroma_for_attribute(product_id: str, field_name: str, top_k: int = 2, require_mpn_verified: bool = False) -> list[dict]:
+    """
+    Query ChromaDB semantically for chunks most relevant to a specific field.
+    Returns top_k chunks as dicts with 'text', 'url', 'source_type', 'is_mfr_domain', 'mpn_verified'.
+    """
+    try:
+        from pipeline.retriever import _collection
+        if not _collection:
+            return []
+        query_text = f"What is the {field_name.replace('_', ' ')} specification?"
+        
+        # If variant specific, filter or prioritize mpn_verified chunks
+        where_filter = {"product_id": product_id}
+        if require_mpn_verified:
+            where_filter["mpn_verified"] = True
+            
+        try:
+            results = _collection.query(
+                query_texts=[query_text],
+                n_results=top_k,
+                where=where_filter,
+            )
+        except Exception:
+            # Fallback without mpn_verified filter if empty
+            results = _collection.query(
+                query_texts=[query_text],
+                n_results=top_k,
+                where={"product_id": product_id},
+            )
+            
+        chunks = []
+        if results and results.get("ids") and results["ids"][0]:
+            for i in range(len(results["ids"][0])):
+                meta = results["metadatas"][0][i] if results["metadatas"] else {}
+                doc = results["documents"][0][i] if results["documents"] else ""
+                chunks.append({
+                    "text": doc,
+                    "url": meta.get("url", ""),
+                    "source_type": meta.get("source_type", "webpage_text"),
+                    "is_mfr_domain": meta.get("is_mfr_domain", False),
+                    "mpn_verified": meta.get("mpn_verified", False),
+                    "source_tier": meta.get("source_tier", 3),
+                })
+        return chunks
+    except Exception as e:
+        logger.debug("[RAG] Chroma query failed for '%s': %s", field_name, e)
+        return []
+
+
+def _extract_field_with_rag(
+    brand: str, mpn: str, description: str, category: str,
+    field_name: str, product_id: str, fallback_chunks: list[dict]
+) -> dict | None:
+    """
+    Extract a single field using attribute-specific RAG.
+    1. Query Chroma for top-2 most relevant chunks for this field.
+    2. Fall back to first 2 fallback_chunks if Chroma returns nothing.
+    3. Run a tiny, focused LLM prompt (fits in Groq 8k context).
+    Returns {"value": ..., "snippet": ..., "url": ..., "source": "mfr"|"ref"|"inferred"}.
+    """
+    is_variant = is_variant_specific(field_name)
+    
+    # Get attribute-relevant chunks (require mpn_verified for variant fields if possible)
+    rag_chunks = _query_chroma_for_attribute(product_id, field_name, top_k=2, require_mpn_verified=is_variant)
+    if not rag_chunks:
+        # Sort fallback chunks by tier and MPN verification
+        sorted_fb = sorted(
+            fallback_chunks,
+            key=lambda c: (
+                0 if (c.get("is_mfr_domain") and c.get("mpn_verified")) else
+                1 if c.get("is_mfr_domain") else
+                2 if c.get("mpn_verified") else 3
+            )
+        )
+        rag_chunks = sorted_fb[:2]
+
+    if not rag_chunks:
+        return None
+
+    # Build a tiny focused context
+    context_parts = []
+    for i, c in enumerate(rag_chunks):
+        text = (c.get("text") or "")[:1500]
+        url = c.get("url", "")
+        mfr = "★MFR" if c.get("is_mfr_domain") else ""
+        ver = "✓MPN-VERIFIED" if c.get("mpn_verified") else ""
+        context_parts.append(f"[SOURCE {i+1} {mfr} {ver} {url}]\n{text}")
+    context = "\n\n---\n\n".join(context_parts)
+
+    readable = field_name.replace("_", " ").title()
+    constraint_note = (
+        f"IMPORTANT: '{readable}' is a VARIANT-SPECIFIC attribute. It MUST apply directly to MPN '{mpn}'. "
+        f"Do not confuse with sibling products or other size variants."
+        if is_variant else
+        f"NOTE: '{readable}' is a SERIES-LEVEL attribute. It can apply to the product line/series if mentioned."
+    )
+
+    prompt = f"""Product: {brand} {mpn}
+Category: {category}
+Description: {description}
+
+{constraint_note}
+
+Documentation excerpts:
+{context}
+
+TASK: Find the '{readable}' for this exact product.
+- Return the value ONLY if explicitly stated in the documentation above.
+- Include the exact verbatim quote as 'snippet' and the source URL.
+- If not found, return null for value.
+- Never hallucinate or guess.
+
+Return JSON only: {{"value": "...", "snippet": "...", "url": "..."}}"""
+
+    try:
+        raw = generate_with_retry(
+            messages=[
+                {"role": "system", "content": _SYSTEM_PROMPT},
+                {"role": "user", "content": prompt},
+            ],
+            response_format={"type": "json_object"},
+            temperature=0.05,
+        )
+        data = parse_json_response(raw)
+        val = data.get("value")
+        if val is not None and str(val).strip() not in ("", "null", "None", "N/A"):
+            from pipeline.knowledge_store import get_canonical_attribute_value
+            canonical = get_canonical_attribute_value(str(val))
+            if canonical:
+                logger.info("[Extractor] Alias hit for field '%s': '%s' -> '%s'", field_name, val, canonical)
+                val = canonical
+            return {
+                "value": val,
+                "snippet": data.get("snippet"),
+                "url": data.get("url") or (rag_chunks[0].get("url") if rag_chunks else None),
+                "is_mfr": any(c.get("is_mfr_domain") for c in rag_chunks),
+                "mpn_verified": any(c.get("mpn_verified") for c in rag_chunks),
+                "source_tier": min((c.get("source_tier", 3) for c in rag_chunks), default=3),
+            }
+    except Exception as e:
+        logger.debug("[RAG] Field '%s' extraction failed: %s", field_name, e)
+    return None
 
 _SYSTEM_PROMPT = (
     "You are a precise data extraction AI for industrial B2B and consumer products. "
@@ -493,59 +684,82 @@ def extract(
     if not chunks:
         logger.warning("[Extractor] No chunks available — skipping to inference")
     else:
-        # ── Pass 1: Single batched LLM call for all category fields ──────────
-        prompt = _build_batched_prompt(
-            brand, mpn, description, category, subcategory, expected_fields, chunks
-        )
-        messages = [
-            {"role": "system", "content": _SYSTEM_PROMPT},
-            {"role": "user", "content": prompt},
-        ]
-        logger.info("[Extractor] Sending batched extraction for %d fields across %d chunks",
-                    len(expected_fields), len(chunks))
+        # ─────────────────────────────────────────────────────────────────────
+        # Pass 1: ATTRIBUTE-SPECIFIC RAG (replaces monolithic batch)
+        #
+        # For each field, we query ChromaDB for only the 2 most relevant
+        # chunks for that specific attribute, then run a tiny focused LLM
+        # prompt. This keeps every call well within the 8k context window
+        # of Groq's fast tier and avoids the 400/context-overflow errors.
+        # ─────────────────────────────────────────────────────────────────────
+        product_id = f"{brand.strip().lower()}_{mpn.strip().lower()}"
+        fields_to_extract = [f for f in expected_fields if f != "series" or not results.get("series") or results["series"].value is None]
 
-        task_type = "pdf" if _detect_source_type(chunks).startswith("pdf") else "normal"
-        try:
-            raw = generate_with_retry(messages=messages, response_format={"type": "json_object"}, temperature=0.1, task_type=task_type)
-            data = parse_json_response(raw)
+        logger.info("[Extractor] Starting attribute-specific RAG for %d fields", len(fields_to_extract))
 
-            for fname in expected_fields:
-                # Skip series if already set from Pass 0
-                if fname == "series" and results.get("series") and results["series"].value:
+        conflict_log: dict[str, list[str]] = {}  # field → list of different values seen
+
+        from pipeline.knowledge_store import get_series_knowledge, save_series_knowledge
+        
+        series_knowledge = {}
+        if results.get("series") and results["series"].value:
+            sk_list = get_series_knowledge(brand, str(results["series"].value))
+            for sk in sk_list:
+                series_knowledge[sk["attribute"]] = sk
+
+        for field_name in fields_to_extract:
+            # ── 1. Check Series Knowledge Cache (ONLY for shared attributes) ──
+            if field_name in series_knowledge and is_series_shared(field_name):
+                sk = series_knowledge[field_name]
+                if sk.get("scope", "series") == "series":
+                    ef = results.get(field_name, ExtractedField())
+                    ef.value = sk["value"]
+                    ef.source_type = sk.get("source") or "series_knowledge"
+                    results[field_name] = ef
+                    logger.info("[Extractor] Shared field '%s' inherited from series knowledge: %s", field_name, sk["value"])
                     continue
 
-                # Try both snake_case and label versions
-                fdata = data.get(fname) or data.get(fname.replace("_", " ").title())
-                if not fdata:
-                    # Also try lowercase title
-                    fdata = data.get(fname.replace("_", " ").lower())
+            # ── 2. Run Attribute-Specific RAG ──
+            extracted = _extract_field_with_rag(
+                brand, mpn, description, category,
+                field_name, product_id, chunks
+            )
+            if extracted:
+                prev = results.get(field_name)
+                new_val = str(extracted["value"]).strip()
 
-                if isinstance(fdata, dict):
-                    val = fdata.get("value")
-                    if val is not None and str(val).strip() not in ("", "null", "None", "N/A"):
-                        results[fname].value = val
-                        results[fname].source_type = _detect_source_type(chunks)
-                        results[fname].url = fdata.get("url") or first_url
-                        results[fname].snippet = fdata.get("snippet")
-                        # Assign doc metadata
-                        url = fdata.get("url") or first_url
-                        matching = next(
-                            (c for c in chunks if c.get("url") == url),
-                            first_mfr_chunk or (chunks[0] if chunks else None)
-                        )
-                        if matching:
-                            results[fname].doc_id = matching.get("doc_id")
-                            results[fname].doc_name = matching.get("doc_name")
-                elif fdata is not None:
-                    # Scalar value
-                    val = str(fdata).strip()
-                    if val and val not in ("null", "None", "N/A"):
-                        results[fname].value = val
-                        results[fname].source_type = _detect_source_type(chunks)
-                        results[fname].url = first_url
+                # Conflict detection: if we already have a value from a different source
+                if prev and prev.value is not None:
+                    old_val = str(prev.value).strip()
+                    if old_val.lower() != new_val.lower():
+                        # Record conflict
+                        conflict_log.setdefault(field_name, [old_val]).append(new_val)
+                        logger.warning("[Extractor] CONFLICT on '%s': '%s' vs '%s'",
+                                       field_name, old_val, new_val)
+                        # Keep the manufacturer-sourced value
+                        if extracted.get("is_mfr") and not prev.source_type.startswith("mfr"):
+                            pass  # fall through to overwrite with mfr value
+                        else:
+                            continue  # keep existing value
 
-        except Exception as e:
-            logger.error("[Extractor] Batched extraction failed: %s", e)
+                ef = results.get(field_name, ExtractedField())
+                ef.value = extracted["value"]
+                ef.source_type = "mfr_webpage" if extracted.get("is_mfr") else _detect_source_type(chunks)
+                ef.url = extracted.get("url")
+                ef.snippet = extracted.get("snippet")
+                results[field_name] = ef
+                
+                # Save to series knowledge: only mark scope='series' if it's truly a shared attribute
+                if extracted.get("is_mfr") and results.get("series") and results["series"].value:
+                    attr_scope = "series" if is_series_shared(field_name) else "variant"
+                    save_series_knowledge(
+                        brand, str(results["series"].value), field_name, new_val, 
+                        scope=attr_scope, confidence=0.9, source="mfr_webpage"
+                    )
+
+        if conflict_log:
+            logger.info("[Extractor] Conflicts detected in %d fields: %s",
+                        len(conflict_log), list(conflict_log.keys()))
 
     # ── Pass 1.5: Targeted document re-search for still-missing fields ──────
     missing_after_batch = [f for f, r in results.items() if r.value is None]

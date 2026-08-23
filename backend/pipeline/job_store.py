@@ -73,7 +73,11 @@ def init_db() -> None:
 def save_job(state: PipelineState) -> None:
     """Upsert the full PipelineState into the jobs table."""
     now = datetime.now(timezone.utc).isoformat()
-    job_id = state["job_id"]
+    job_id = state.get("job_id") or state.get("product_id")
+    if not job_id:
+        import uuid
+        job_id = str(uuid.uuid4())
+        state["job_id"] = job_id
 
     # Check if it already exists
     with _get_conn() as conn:

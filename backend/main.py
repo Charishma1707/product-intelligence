@@ -39,7 +39,8 @@ def authenticate(credentials: HTTPBasicCredentials = Depends(security)):
 from schema import (
     EnrichRequest, EnrichResponse, SampleProduct, ProductRecord, FieldValue, Citation
 )
-from pipeline.job_store import init_db, save_job, load_job, list_jobs
+from pipeline.job_store import init_db as init_job_store, save_job, load_job, list_jobs
+from pipeline.knowledge_store import init_db as init_knowledge_store
 from pipeline.graph import build_graph, make_initial_state
 from pipeline.state import PipelineState
 from exporter import export_to_unilog_format
@@ -61,27 +62,9 @@ app = FastAPI(
 
 @app.on_event("startup")
 async def startup_event():
-    init_db()
-    logger.info("Job store initialized.")
-
-_SAMPLE_CSV = _BACKEND_DIR / "sample_data" / "sample_products.csv"
-
-@app.get("/sample-products", response_model=list[SampleProduct])
-async def get_sample_products():
-    """Return the sample_products.csv as a JSON list for the frontend demo loader."""
-    if not _SAMPLE_CSV.exists():
-        raise HTTPException(status_code=404, detail="sample_products.csv not found")
-
-    products: list[SampleProduct] = []
-    with _SAMPLE_CSV.open(newline="", encoding="utf-8-sig") as f:
-        reader = csv.DictReader(f)
-        for row in reader:
-            products.append(SampleProduct(
-                brand=row["brand"].strip(),
-                mpn=row["mpn"].strip(),
-                description=row["description"].strip(),
-            ))
-    return products
+    init_job_store()
+    init_knowledge_store()
+    logger.info("Stores initialized.")
 
 app.add_middleware(
     CORSMiddleware,
@@ -97,6 +80,8 @@ class LGEnrichResponse(BaseModel):
     hitl_required: bool = False
     product: ProductRecord | None = None
     error: str | None = None
+    implicit_boost_count: int = 0
+    post_approval_summary: dict | None = None
 
 
 class HITLResumeRequest(BaseModel):
@@ -188,40 +173,52 @@ def _state_to_record(state: PipelineState) -> ProductRecord:
 
 @app.post("/enrich/v2", response_model=LGEnrichResponse, tags=["LangGraph v2"])
 async def enrich_v2(request: EnrichRequest, user: str = Depends(authenticate)):
+    effective_brand = request.brand or request.part_manuf or request.e1_brand or ""
     # Check for caching/deduplication
     existing_jobs = list_jobs(status="complete", limit=1000)
     for job in existing_jobs:
-        if job.get("brand") == request.brand and job.get("mpn") == request.mpn:
-            logger.info("Cache hit for %s %s. Returning existing completed job %s", request.brand, request.mpn, job["job_id"])
+        if (job.get("brand") == effective_brand or job.get("mpn") == request.mpn) and job.get("mpn") == request.mpn:
+            logger.info("Cache hit for %s %s. Returning existing completed job %s", effective_brand, request.mpn, job["job_id"])
+            full_job = load_job(job["job_id"]) or job
             return LGEnrichResponse(
                 status="complete",
                 job_id=job["job_id"],
-                product=_state_to_record(job),
+                product=_state_to_record(full_job),
                 hitl_required=False
             )
 
     job_id = str(uuid.uuid4())
     initial_state = make_initial_state(
-        brand=request.brand,
+        brand=effective_brand,
         mpn=request.mpn,
         description=request.description,
         provided_schema=request.provided_schema,
         strict_schema=request.strict_schema,
         force_review=request.force_review,
         job_id=job_id,
+        input_part_manuf=request.part_manuf or "",
+        input_e1_brand=request.e1_brand or "",
+        input_unilog_brand=request.unilog_brand or "",
+        input_dib_brand=request.dib_brand or "",
+        input_part_desc=request.description or "",
     )
 
     loop = asyncio.get_running_loop()
     try:
         def _run():
-            graph = build_graph()
-            return graph.invoke(initial_state)
+            from pipeline.nodes import node_identity, node_taxonomy
+            id_update = node_identity(initial_state)
+            initial_state.update(id_update)
+            tax_update = node_taxonomy(initial_state)
+            initial_state.update(tax_update)
+            initial_state["status"] = "needs_review_identity"
+            return initial_state
 
         final_state = await loop.run_in_executor(None, _run)
         save_job(final_state)
 
         record = _state_to_record(final_state)
-        hitl = final_state.get("status") == "needs_review"
+        hitl = True
 
         return LGEnrichResponse(
             status=final_state.get("status", "failed"),
@@ -244,62 +241,143 @@ async def resume_hitl(req: HITLResumeRequest, user: str = Depends(authenticate))
     state = load_job(req.job_id)
     if not state:
         raise HTTPException(status_code=404, detail=f"Job {req.job_id} not found.")
-    if state.get("status") != "needs_review":
+    
+    current_status = state.get("status", "needs_review")
+    valid_review_statuses = (
+        "needs_review", "needs_review_identity", "needs_review_retrieval",
+        "needs_review_extraction", "needs_review_final", "needs_review_delivery"
+    )
+    if current_status not in valid_review_statuses:
         raise HTTPException(
             status_code=400,
-            detail=f"Job {req.job_id} is not in needs_review state.",
+            detail=f"Job {req.job_id} is in status '{current_status}' and cannot be resumed.",
         )
 
-    specs = state.get("specifications", {})
-    for field_name, corrected_value in req.corrections.items():
-        if field_name in specs:
-            if hasattr(specs[field_name], "value"):
-                specs[field_name].value = corrected_value
-                specs[field_name].confidence = 1.0
-                specs[field_name].method = "human_verified"
-                specs[field_name].cause = f"Corrected by {req.reviewer}"
-            else:
-                specs[field_name]["value"] = corrected_value
-                specs[field_name]["confidence"] = 1.0
-                specs[field_name]["method"] = "human_verified"
-                specs[field_name]["cause"] = f"Corrected by {req.reviewer}"
-
-    state["specifications"] = specs
-    state["status"] = "in_progress" # Resume
-
-    # Re-compute overall confidence
-    if specs:
-        total_conf = 0
-        for f in specs.values():
-            if isinstance(f, dict):
-                total_conf += f.get("confidence", 0)
-            else:
-                total_conf += getattr(f, "confidence", 0.0)
-        state["overall_confidence"] = round(total_conf / len(specs), 3)
-
-    # Resume from copywrite
     loop = asyncio.get_running_loop()
     try:
-        def _run_resume():
-            # Create a subgraph or just call nodes directly since we only have 2 left
-            from pipeline.nodes import node_copywrite, node_finalize
-            state.update(node_copywrite(state))
-            state.update(node_finalize(state))
-            return state
+        from pipeline.nodes import node_hitl_supervisor, apply_implicit_confidence_boost, node_post_approval_persist
 
-        final_state = await loop.run_in_executor(None, _run_resume)
-        save_job(final_state)
+        implicit_boost_count = 0
+        post_approval_summary = None
 
-        record = _state_to_record(final_state)
+        def _run_supervisor():
+            nonlocal implicit_boost_count, post_approval_summary
+            # Detect if human advanced without making any field changes
+            no_field_changes = len(req.corrections) == 0
+            stage_map = {
+                "needs_review_identity": 1,
+                "needs_review_retrieval": 2,
+                "needs_review_extraction": 3,
+                "needs_review": 3,
+                "needs_review_final": 4,
+                "needs_review_delivery": 5,
+            }
+            stage_num = stage_map.get(current_status, 3)
+
+            if no_field_changes and stage_num in (1, 2, 3, 4, 5):
+                updated_state, boosted = apply_implicit_confidence_boost(
+                    state, stage_num, req.corrections, req.reviewer
+                )
+                implicit_boost_count = len(boosted)
+                state.update(updated_state)
+
+            # If Stage 5 final delivery accept → run post-approval persist
+            if current_status == "needs_review_delivery":
+                result = node_post_approval_persist(state, req.reviewer)
+                state.update(result)
+                post_approval_summary = state.get("post_approval_summary")
+                return state
+
+            return node_hitl_supervisor(state, req.corrections, req.reviewer)
+
+        state = await loop.run_in_executor(None, _run_supervisor)
+        save_job(state)
+
+        record = _state_to_record(state)
+        hitl = state.get("status") in (
+            "needs_review_identity", "needs_review_retrieval",
+            "needs_review_extraction", "needs_review_final", "needs_review_delivery"
+        )
+
         return LGEnrichResponse(
-            status=final_state.get("status", "completed"),
+            status=state.get("status", "complete"),
             job_id=req.job_id,
             product=record,
-            hitl_required=False,
+            hitl_required=hitl,
+            implicit_boost_count=implicit_boost_count,
+            post_approval_summary=post_approval_summary,
         )
     except Exception as exc:
         logger.exception("HITL resume failed for job %s", req.job_id)
         return LGEnrichResponse(status="failed", job_id=req.job_id, error=str(exc))
+
+
+class HITLAgentPromptRequest(BaseModel):
+    job_id: str
+    prompt: str
+
+
+@app.post("/enrich/agent/prompt", response_model=LGEnrichResponse, tags=["LangGraph v2"])
+async def agent_prompt(req: HITLAgentPromptRequest, user: str = Depends(authenticate)):
+    state = load_job(req.job_id)
+    if not state:
+        raise HTTPException(status_code=404, detail=f"Job {req.job_id} not found.")
+
+    from pipeline.hitl_agent import execute_agent_prompt
+    from pipeline.nodes import node_validate, node_copywrite, node_finalize
+
+    loop = asyncio.get_running_loop()
+    try:
+        def _run_agent():
+            s = execute_agent_prompt(state, req.prompt)
+            # Re-run nodes to reflect the updates
+            s.update(node_validate(s))
+            s.update(node_copywrite(s))
+            s.update(node_finalize(s))
+            s["status"] = "needs_review_final"
+            return s
+
+        updated_state = await loop.run_in_executor(None, _run_agent)
+        save_job(updated_state)
+
+        record = _state_to_record(updated_state)
+        return LGEnrichResponse(
+            status="needs_review_final",
+            job_id=req.job_id,
+            product=record,
+            hitl_required=True,
+        )
+    except Exception as exc:
+        logger.exception("Agent prompt execution failed for job %s", req.job_id)
+        return LGEnrichResponse(status="failed", job_id=req.job_id, error=str(exc))
+
+
+class HITLStopRequest(BaseModel):
+    job_id: str
+
+
+@app.post("/enrich/stop", response_model=LGEnrichResponse, tags=["LangGraph v2"])
+async def stop_enrich(req: HITLStopRequest, user: str = Depends(authenticate)):
+    state = load_job(req.job_id)
+    if not state:
+        raise HTTPException(status_code=404, detail=f"Job {req.job_id} not found.")
+
+    state["status"] = "stopped"
+    save_job(state)
+
+    record = _state_to_record(state)
+    return LGEnrichResponse(
+        status="stopped",
+        job_id=req.job_id,
+        product=record,
+        hitl_required=False,
+    )
+
+
+@app.get("/metrics", tags=["Metrics"])
+async def get_metrics():
+    from pipeline.knowledge_store import get_all_metrics
+    return get_all_metrics()
 
 
 @app.get("/jobs", tags=["LangGraph v2"])
@@ -313,6 +391,46 @@ async def get_job(job_id: str):
     if not state:
         raise HTTPException(status_code=404, detail=f"Job {job_id} not found.")
     return _state_to_record(state)
+
+
+class ExportSaveRequest(BaseModel):
+    job_id: str | None = None
+
+
+@app.post("/export/save", tags=["LangGraph v2"])
+async def export_save(req: ExportSaveRequest, user: str = Depends(authenticate)):
+    """
+    Persist the final product record to the product_attributes DB table.
+    If job_id is provided, saves that specific job. Otherwise saves all complete jobs.
+    """
+    from pipeline.knowledge_store import save_product_attribute
+
+    if req.job_id:
+        states = [load_job(req.job_id)]
+        states = [s for s in states if s]
+    else:
+        summary_states = list_jobs(status="complete", limit=1000)
+        states = [load_job(s["job_id"]) for s in summary_states]
+        states = [s for s in states if s]
+
+    saved_count = 0
+    for state in states:
+        brand = state.get("brand", "")
+        mpn = state.get("mpn", "")
+        specs = state.get("specifications", {})
+        for fname, fval_obj in specs.items():
+            val = (fval_obj.get("value") if isinstance(fval_obj, dict)
+                   else getattr(fval_obj, "value", None))
+            conf = (fval_obj.get("confidence", 0.0) if isinstance(fval_obj, dict)
+                    else getattr(fval_obj, "confidence", 0.0))
+            if val is not None:
+                try:
+                    save_product_attribute(brand, mpn, fname, str(val), conf, "pipeline", user)
+                    saved_count += 1
+                except Exception:
+                    pass
+
+    return {"status": "saved", "attributes_saved": saved_count, "products_saved": len(states)}
 
 @app.get("/export/csv", tags=["LangGraph v2"])
 async def export_csv(status: str | None = "complete"):
@@ -357,9 +475,9 @@ async def export_csv(status: str | None = "complete"):
         headers={"Content-Disposition": "attachment; filename=Unilog_Submission.csv"}
     )
 
-@app.get("/sample-products", tags=["LangGraph v2"])
+@app.get("/sample-products", tags=["LangGraph v2"], response_model=list[SampleProduct])
 async def get_sample_products():
-    # Pull directly from the Unihack dataset instead of the mock CSV
+    # Pull directly from the Unihack dataset
     sample_file = _BACKEND_DIR.parent / "Unihack_ Sample Dataset - Input.csv"
     if not sample_file.exists():
         raise HTTPException(status_code=404, detail="Unihack Sample Dataset not found")
@@ -367,23 +485,33 @@ async def get_sample_products():
     samples = []
     with open(sample_file, "r", encoding="utf-8-sig") as f:
         reader = csv.DictReader(f)
-        for i, row in enumerate(reader):
-            if i >= 30: # Limit dropdown to 30 items
+        for i, row in enumerate(reader, start=2):  # Row 2 is the first data row (1-indexed CSV line)
+            if len(samples) >= 30: # Limit dropdown to 30 items
                 break
                 
-            brand = (row.get("Part_Manuf") or row.get("E1_Brand") or "").strip()
+            manuf = (row.get("Part_Manuf") or "").strip()
+            e1 = (row.get("E1_Brand") or "").strip()
+            unilog = (row.get("Unilog_Brand") or "").strip()
+            dib = (row.get("DIB_Brand") or "").strip()
             mpn = (row.get("Mfg_Part_Num") or "").strip()
             desc = (row.get("Part_Desc") or "").strip()
             
-            # Skip empty or unbranded rows for a cleaner dropdown
-            if not mpn or brand == "-- Unbranded --" or not brand:
+            if not mpn:
                 continue
                 
-            samples.append({
-                "brand": brand,
-                "mpn": mpn,
-                "description": desc
-            })
+            brand_display = manuf or e1 or "Brand"
+            label = f"[Row {i}] {mpn} — {desc[:35]}..." if desc else f"[Row {i}] {mpn}"
+            
+            samples.append(SampleProduct(
+                brand=manuf or e1 or "",
+                mpn=mpn,
+                description=desc,
+                part_manuf=manuf,
+                e1_brand=e1,
+                unilog_brand=unilog,
+                dib_brand=dib,
+                label=label
+            ))
     return samples
 
 @app.post("/enrich/batch", tags=["LangGraph v2"])

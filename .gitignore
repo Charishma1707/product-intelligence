@@ -6,3 +6,5 @@ data/
 .pytest_cache/
 node_modules/
 frontend/node_modules/
+*.db
+backend/storage/pdfs/

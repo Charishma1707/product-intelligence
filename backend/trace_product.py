@@ -68,12 +68,18 @@ def trace_product(target_mpn):
     logger.info("Pipeline Finished.")
     logger.info("Exporting to Unilog Format...")
     
-    output_rows = export_to_unilog_format([final_state])
-    if not output_rows:
+    import io
+    output_csv_str = export_to_unilog_format([final_state])
+    if not output_csv_str:
         logger.error("No output rows generated!")
         return
         
-    actual_row = output_rows[0]
+    reader = csv.DictReader(io.StringIO(output_csv_str))
+    actual_row = next(reader, None)
+    
+    if not actual_row:
+        logger.error("Failed to parse output CSV row!")
+        return
     
     print("\n" + "="*80)
     print(f"TRACE RESULTS FOR {target_mpn}")
