@@ -84,20 +84,17 @@ def _call_groq(messages: list[dict], response_format=None, temperature: float = 
 # ─────────────────────────────────────────────────────────────
 
 def _call_gemini(messages: list[dict], response_format=None, temperature: float = 0.1,
-                 max_retries: int = 2) -> str:
-    """Call Gemini REST API with rate limiting."""
-    global _gemini_last_call_time, _gemini_quota_exhausted, _gemini_quota_reset_time
+                 max_retries: int = 3) -> str:
+    """Call Gemini 3.6 Flash REST API with automatic backoff retry."""
+    global _gemini_last_call_time
 
     gemini_key = os.getenv("GEMINI_API_KEY")
     if not gemini_key:
         raise ValueError("GEMINI_API_KEY not set in .env")
 
-    if _gemini_quota_exhausted and time.time() < _gemini_quota_reset_time:
-        raise RuntimeError("Gemini quota in cool-down")
-
     url = (
         f"https://generativelanguage.googleapis.com/v1beta/models/"
-        f"{_GEMINI_MODEL}:generateContent?key={gemini_key}"
+        f"gemini-3.6-flash:generateContent?key={gemini_key}"
     )
 
     system_instruction = None
@@ -118,37 +115,28 @@ def _call_gemini(messages: list[dict], response_format=None, temperature: float 
     if response_format and response_format.get("type") == "json_object":
         payload["generationConfig"]["responseMimeType"] = "application/json"
 
+    last_err = None
     for attempt in range(1, max_retries + 1):
-        wait = _GEMINI_MIN_INTERVAL - (time.time() - _gemini_last_call_time)
-        if wait > 0:
-            time.sleep(wait)
         try:
-            _gemini_last_call_time = time.time()
-            r = requests.post(url, json=payload, timeout=60)
-
+            r = requests.post(url, json=payload, timeout=30)
             if r.status_code == 429:
-                _gemini_quota_exhausted = True
-                _gemini_quota_reset_time = time.time() + 60
-                raise RuntimeError("Gemini 429 quota exhausted")
+                wait_time = attempt * 2
+                logger.warning(f"Gemini 3.6 Flash 429 rate limit (attempt {attempt}/{max_retries}) — backing off for {wait_time}s...")
+                time.sleep(wait_time)
+                continue
 
             r.raise_for_status()
             data = r.json()
             if "candidates" not in data or not data["candidates"]:
                 raise ValueError(f"Empty Gemini response: {data}")
 
-            _gemini_quota_exhausted = False
             return data["candidates"][0]["content"]["parts"][0]["text"]
-
         except Exception as e:
-            if "quota" in str(e).lower() or "429" in str(e):
-                raise
-            if attempt < max_retries:
-                logger.warning("Gemini error (attempt %d/%d): %s — retrying", attempt, max_retries, e)
-                time.sleep(5)
-            else:
-                raise
+            last_err = e
+            logger.warning(f"Gemini 3.6 Flash attempt {attempt} failed: {e}")
+            time.sleep(1.5)
 
-    raise RuntimeError("Gemini exhausted all retries")
+    raise RuntimeError(f"Gemini 3.6 Flash exhausted retries. Last error: {last_err}")
 
 
 # ─────────────────────────────────────────────────────────────
