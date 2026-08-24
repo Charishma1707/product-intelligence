@@ -294,7 +294,18 @@ def list_jobs(status: str | None = None, limit: int = 50) -> list[dict]:
                     (limit,),
                 ).fetchall()
 
-        return [dict(r) for r in rows]
+        result = []
+        for r in rows:
+            result.append({
+                "job_id": str(r["job_id"] or ""),
+                "brand": str(r["brand"] or ""),
+                "mpn": str(r["mpn"] or ""),
+                "status": str(r["status"] or "complete"),
+                "overall_confidence": float(r["overall_confidence"] or 0.0),
+                "created_at": str(r["created_at"] or ""),
+                "updated_at": str(r["updated_at"] or "")
+            })
+        return result
     except Exception as e:
         logger.warning(f"Error reading jobs table: {e}")
         return []
