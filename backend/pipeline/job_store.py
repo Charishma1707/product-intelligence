@@ -279,21 +279,25 @@ def load_job(job_id: str) -> PipelineState | None:
 
 def list_jobs(status: str | None = None, limit: int = 50) -> list[dict]:
     """Return summary rows from the jobs table."""
-    with _get_conn() as conn:
-        if status:
-            rows = conn.execute(
-                "SELECT job_id, brand, mpn, status, overall_confidence, created_at, updated_at "
-                "FROM jobs WHERE status = ? ORDER BY created_at DESC LIMIT ?",
-                (status, limit),
-            ).fetchall()
-        else:
-            rows = conn.execute(
-                "SELECT job_id, brand, mpn, status, overall_confidence, created_at, updated_at "
-                "FROM jobs ORDER BY created_at DESC LIMIT ?",
-                (limit,),
-            ).fetchall()
+    try:
+        with _get_conn() as conn:
+            if status:
+                rows = conn.execute(
+                    "SELECT job_id, brand, mpn, status, overall_confidence, created_at, updated_at "
+                    "FROM jobs WHERE status = ? ORDER BY ROWID DESC LIMIT ?",
+                    (status, limit),
+                ).fetchall()
+            else:
+                rows = conn.execute(
+                    "SELECT job_id, brand, mpn, status, overall_confidence, created_at, updated_at "
+                    "FROM jobs ORDER BY ROWID DESC LIMIT ?",
+                    (limit,),
+                ).fetchall()
 
-    return [dict(r) for r in rows]
+        return [dict(r) for r in rows]
+    except Exception as e:
+        logger.warning(f"Error reading jobs table: {e}")
+        return []
 
 
 def delete_job(job_id: str) -> bool:
