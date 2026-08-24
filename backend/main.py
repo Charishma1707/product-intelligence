@@ -404,7 +404,11 @@ async def get_job(job_id: str):
     state = load_job(job_id)
     if not state:
         raise HTTPException(status_code=404, detail=f"Job {job_id} not found.")
-    return _state_to_record(state)
+    try:
+        return _state_to_record(state)
+    except Exception as e:
+        logger.error(f"Error building record for job {job_id}: {e}")
+        return JSONResponse(status_code=200, content=state)
 
 
 class ExportSaveRequest(BaseModel):
