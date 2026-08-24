@@ -396,6 +396,16 @@ async def get_metrics():
     return get_all_metrics()
 
 
+@app.get("/test-jobs")
+async def test_jobs():
+    try:
+        from pipeline.job_store import list_jobs
+        res = list_jobs()
+        return {"count": len(res), "items": res}
+    except Exception as e:
+        return {"error": str(e), "type": type(e).__name__}
+
+
 @app.get("/jobs", tags=["LangGraph v2"])
 async def get_jobs(status: str | None = None, limit: int = 50):
     try:
