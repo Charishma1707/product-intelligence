@@ -12,7 +12,7 @@ import logging
 import os
 import uuid
 from pathlib import Path
-from typing import Any
+from typing import Any, Optional
 from datetime import datetime, timezone
 
 from dotenv import load_dotenv
@@ -428,7 +428,7 @@ async def test_jobs():
 
 
 @app.get("/jobs", tags=["LangGraph v2"])
-async def get_jobs(status: str | None = None, limit: int = 50):
+async def get_jobs(status: Optional[str] = None, limit: int = 50):
     try:
         jobs_data = list_jobs(status=status, limit=limit)
         return JSONResponse(status_code=200, content={"jobs": jobs_data})
