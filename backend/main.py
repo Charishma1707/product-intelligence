@@ -392,7 +392,11 @@ async def get_metrics():
 
 @app.get("/jobs", tags=["LangGraph v2"])
 async def get_jobs(status: str | None = None, limit: int = 50):
-    return {"jobs": list_jobs(status=status, limit=limit)}
+    try:
+        return {"jobs": list_jobs(status=status, limit=limit)}
+    except Exception as e:
+        logger.error(f"Error listing jobs: {e}")
+        return {"jobs": []}
 
 
 @app.get("/jobs/{job_id}", tags=["LangGraph v2"])
