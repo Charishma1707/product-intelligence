@@ -234,10 +234,13 @@ def save_job(state: PipelineState) -> None:
 
     # Check if it already exists
     with _get_conn() as conn:
-        existing = conn.execute(
-            "SELECT created_at FROM jobs WHERE job_id = ?", (job_id,)
-        ).fetchone()
-        created_at = existing["created_at"] if existing else now
+        try:
+            existing = conn.execute(
+                "SELECT * FROM jobs WHERE job_id = ?", (job_id,)
+            ).fetchone()
+            created_at = dict(existing).get("created_at", now) if existing else now
+        except Exception:
+            created_at = now
 
         def custom_serializer(obj):
             if hasattr(obj, "model_dump"):
