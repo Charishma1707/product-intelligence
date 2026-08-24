@@ -122,7 +122,7 @@ def init_db() -> None:
             )
         ''')
         conn.commit()
-    logger.info("Knowledge store initialized at %s", _DB_PATH)
+    logger.info("Knowledge store initialized at %s", _get_db_path())
 
 
 # --- Scalability Metrics ---
