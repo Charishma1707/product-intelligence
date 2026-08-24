@@ -63,13 +63,19 @@ def init_db() -> None:
                 mpn              TEXT NOT NULL,
                 status           TEXT NOT NULL,
                 overall_confidence REAL,
-                created_at       TEXT NOT NULL,
-                updated_at       TEXT NOT NULL,
+                created_at       TEXT NOT NULL DEFAULT '',
+                updated_at       TEXT NOT NULL DEFAULT '',
                 state_json       TEXT NOT NULL
             )
         """)
+        # Ensure missing columns in existing DB are added
+        for col in ["created_at", "updated_at"]:
+            try:
+                conn.execute(f"ALTER TABLE jobs ADD COLUMN {col} TEXT DEFAULT ''")
+            except Exception:
+                pass
         conn.commit()
-    logger.info("Job store initialized at %s", _DB_PATH)
+    logger.info("Job store initialized at %s", _get_db_path())
     seed_demo_jobs()
 
 
@@ -292,27 +298,26 @@ def list_jobs(status: str | None = None, limit: int = 50) -> list[dict]:
         with _get_conn() as conn:
             if status:
                 rows = conn.execute(
-                    "SELECT job_id, brand, mpn, status, overall_confidence, created_at, updated_at "
-                    "FROM jobs WHERE status = ? ORDER BY ROWID DESC LIMIT ?",
+                    "SELECT * FROM jobs WHERE status = ? ORDER BY ROWID DESC LIMIT ?",
                     (status, limit),
                 ).fetchall()
             else:
                 rows = conn.execute(
-                    "SELECT job_id, brand, mpn, status, overall_confidence, created_at, updated_at "
-                    "FROM jobs ORDER BY ROWID DESC LIMIT ?",
+                    "SELECT * FROM jobs ORDER BY ROWID DESC LIMIT ?",
                     (limit,),
                 ).fetchall()
 
         result = []
         for r in rows:
+            d = dict(r)
             result.append({
-                "job_id": str(r["job_id"] or ""),
-                "brand": str(r["brand"] or ""),
-                "mpn": str(r["mpn"] or ""),
-                "status": str(r["status"] or "complete"),
-                "overall_confidence": float(r["overall_confidence"] or 0.0),
-                "created_at": str(r["created_at"] or ""),
-                "updated_at": str(r["updated_at"] or "")
+                "job_id": str(d.get("job_id") or ""),
+                "brand": str(d.get("brand") or ""),
+                "mpn": str(d.get("mpn") or ""),
+                "status": str(d.get("status") or "complete"),
+                "overall_confidence": float(d.get("overall_confidence") or 0.0),
+                "created_at": str(d.get("created_at") or ""),
+                "updated_at": str(d.get("updated_at") or "")
             })
         return result
     except Exception as e:
