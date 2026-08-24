@@ -257,24 +257,31 @@ def save_job(state: PipelineState) -> None:
                 return obj.value
             return str(obj)
 
-        conn.execute("""
-            INSERT INTO jobs (job_id, brand, mpn, status, overall_confidence, created_at, updated_at, state_json)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-            ON CONFLICT(job_id) DO UPDATE SET
-                status             = excluded.status,
-                overall_confidence = excluded.overall_confidence,
-                updated_at         = excluded.updated_at,
-                state_json         = excluded.state_json
-        """, (
-            job_id,
-            state.get("brand", ""),
-            state.get("mpn", ""),
-            state.get("status", "running"),
-            state.get("overall_confidence", 0.0),
-            created_at,
-            now,
-            json.dumps(state, default=custom_serializer),
-        ))
+        state_json = json.dumps(state, default=custom_serializer)
+        brand = state.get("brand", "")
+        mpn = state.get("mpn", "")
+        status = state.get("status", "running")
+        overall_confidence = float(state.get("overall_confidence") or 0.0)
+
+        if existing:
+            conn.execute("""
+                UPDATE jobs SET
+                    brand = ?,
+                    mpn = ?,
+                    status = ?,
+                    overall_confidence = ?,
+                    updated_at = ?,
+                    state_json = ?
+                WHERE job_id = ?
+            """, (brand, mpn, status, overall_confidence, now, state_json, job_id))
+        else:
+            try:
+                conn.execute("""
+                    INSERT INTO jobs (job_id, brand, mpn, status, overall_confidence, created_at, updated_at, state_json)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                """, (job_id, brand, mpn, status, overall_confidence, created_at, now, state_json))
+            except Exception as exc:
+                logger.error(f"Error inserting job {job_id}: {exc}")
         conn.commit()
     logger.debug("Job saved: %s (%s)", job_id, state.get("status"))
 
