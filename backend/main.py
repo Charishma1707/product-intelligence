@@ -61,8 +61,14 @@ async def reset_pipeline():
 
 @app.on_event("startup")
 async def startup_event():
-    init_job_store()
-    init_knowledge_store()
+    try:
+        init_job_store()
+    except Exception as e:
+        logger.error(f"Failed to init job store: {e}")
+    try:
+        init_knowledge_store()
+    except Exception as e:
+        logger.error(f"Failed to init knowledge store: {e}")
     logger.info("Stores initialized.")
 
 app.add_middleware(
