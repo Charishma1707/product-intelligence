@@ -16,7 +16,7 @@ from typing import Any
 from datetime import datetime, timezone
 
 from dotenv import load_dotenv
-from fastapi import FastAPI, File, HTTPException, UploadFile, Depends, Form
+from fastapi import FastAPI, File, HTTPException, UploadFile, Depends, Form, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
 from fastapi.security import HTTPBasic, HTTPBasicCredentials
@@ -47,6 +47,14 @@ app = FastAPI(
     description="Enriches minimal product info into a structured product record using LangGraph.",
     version="2.0.0",
 )
+
+@app.exception_handler(Exception)
+async def global_exception_handler(request: Request, exc: Exception):
+    logger.error("Global unhandled exception: %s", exc)
+    return JSONResponse(
+        status_code=200,
+        content={"status": "error", "detail": str(exc), "error_type": type(exc).__name__}
+    )
 
 import subprocess
 
