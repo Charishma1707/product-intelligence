@@ -1,10 +1,39 @@
-.venv/
-__pycache__/
+# Environment variables & secrets
 .env
-data/
-*.csv
+*.env
+backend/.env
+
+# Python & Virtual Environments
+.venv/
+backend/venv/
+venv/
+__pycache__/
+*.pyc
 .pytest_cache/
+
+# Node.js
 node_modules/
 frontend/node_modules/
+frontend/dist/
+
+# Local Databases, Logs, and Output Folders
 *.db
-backend/storage/pdfs/
+data/
+backend/data/
+backend/job_store.db
+backend/knowledge_store.db
+backend/logs/
+backend/outputs/
+backend/storage/
+backend/tmp/
+*.csv
+
+# Office Temporary Lock Files & Deployed IDE Folders
+~$*.pptx
+UniHack_Final_Stunning_V3.pptx
+~$*.xlsx
+~$*.docx
+*.log
+.netlify/
+.streamlit/
+backend/.streamlit/

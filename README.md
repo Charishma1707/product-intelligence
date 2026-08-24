@@ -36,14 +36,14 @@ To solve this, our backend implements a **3-Tier Dynamic LLM Fallback Cascade & 
                                           │
                                           ▼
                       ┌───────────────────────────────────────┐
-                      │ Tier 1: Primary LLM (Groq Cloud)      │
-                      │ Model: qwen/qwen3.6-27b (Fast RAG)    │
+                      │ Tier 1: Primary LLM (Gemini Cloud)    │
+                      │ Model: gemini-3.6-flash               │
                       └───────────────────┬───────────────────┘
                                           │ Rate-Limited / 429 / Error
                                           ▼
                       ┌───────────────────────────────────────┐
-                      │ Tier 2: Fallback LLM (Gemini Cloud)   │
-                      │ Model: gemini-3.6-flash               │
+                      │ Tier 2: Fallback LLM (Groq Cloud)     │
+                      │ Model: qwen/qwen3.6-27b               │
                       └───────────────────┬───────────────────┘
                                           │ Offline / Rate-Limited
                                           ▼

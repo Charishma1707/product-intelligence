@@ -2,8 +2,8 @@
 pipeline/utils.py — Unified LLM backend.
 
 Priority:
-  1. Groq  (cloud, free tier, very fast ~2s) — tried first
-  2. Gemini REST API — fallback if Groq quota hit
+  1. Gemini REST API (gemini-3.6-flash) — tried first (Primary LLM)
+  2. Groq Cloud API (qwen/qwen3.6-27b) — fallback if Gemini quota hit
   3. Ollama (local) — last resort, 60s timeout to prevent hangs
 """
 
@@ -42,7 +42,7 @@ _gemini_quota_reset_time: float = 0.0
 
 
 # ─────────────────────────────────────────────────────────────
-# Groq helpers (PRIMARY)
+# Groq helpers (SECONDARY FALLBACK)
 # ─────────────────────────────────────────────────────────────
 
 def _call_groq(messages: list[dict], response_format=None, temperature: float = 0.1) -> str:
@@ -80,7 +80,7 @@ def _call_groq(messages: list[dict], response_format=None, temperature: float = 
 
 
 # ─────────────────────────────────────────────────────────────
-# Gemini helpers (SECONDARY)
+# Gemini helpers (PRIMARY)
 # ─────────────────────────────────────────────────────────────
 
 def _call_gemini(messages: list[dict], response_format=None, temperature: float = 0.1,
