@@ -33,15 +33,21 @@ from pipeline.state import PipelineState
 
 logger = logging.getLogger(__name__)
 
-_DB_PATH = Path(__file__).resolve().parent.parent / "job_store.db"
+def _get_db_path() -> str:
+    primary = Path(__file__).resolve().parent.parent / "job_store.db"
+    try:
+        primary.parent.mkdir(parents=True, exist_ok=True)
+        # Test touch file
+        test_file = primary.parent / ".db_test"
+        test_file.touch(exist_ok=True)
+        test_file.unlink(missing_ok=True)
+        return str(primary)
+    except Exception:
+        return "/tmp/job_store.db"
 
-
-# ---------------------------------------------------------------------------
-# DB init
-# ---------------------------------------------------------------------------
 
 def _get_conn() -> sqlite3.Connection:
-    conn = sqlite3.connect(str(_DB_PATH))
+    conn = sqlite3.connect(_get_db_path(), timeout=15.0, check_same_thread=False)
     conn.row_factory = sqlite3.Row
     return conn
 
