@@ -282,14 +282,14 @@ def list_jobs(status: str | None = None, limit: int = 50) -> list[dict]:
     with _get_conn() as conn:
         if status:
             rows = conn.execute(
-                "SELECT job_number, job_id, brand, mpn, status, overall_confidence, created_at, updated_at "
-                "FROM jobs WHERE status = ? ORDER BY job_number ASC LIMIT ?",
+                "SELECT job_id, brand, mpn, status, overall_confidence, created_at, updated_at "
+                "FROM jobs WHERE status = ? ORDER BY created_at DESC LIMIT ?",
                 (status, limit),
             ).fetchall()
         else:
             rows = conn.execute(
-                "SELECT job_number, job_id, brand, mpn, status, overall_confidence, created_at, updated_at "
-                "FROM jobs ORDER BY job_number ASC LIMIT ?",
+                "SELECT job_id, brand, mpn, status, overall_confidence, created_at, updated_at "
+                "FROM jobs ORDER BY created_at DESC LIMIT ?",
                 (limit,),
             ).fetchall()
 
