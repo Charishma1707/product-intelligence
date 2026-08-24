@@ -226,25 +226,12 @@ def generate_with_retry(
             logger.warning("[LLM Cascade] Local Ollama failed/skipped: %s. Escalating to Groq...", e)
             last_error = e
 
-    # ── 2. Cloud model cascade (Groq Primary → Gemini Secondary) ─────────────────
-    groq_key = os.getenv("GROQ_API_KEY", "")
-    if groq_key and not (_groq_quota_exhausted and time.time() < _groq_quota_reset_time):
-        try:
-            logger.info("[LLM Cascade] Routing to Groq (%s)", _GROQ_MODEL)
-            result = _call_groq(messages, response_format=response_format, temperature=temperature)
-            if response_format and response_format.get("type") == "json_object":
-                text = _clean_json(result)
-                json.loads(text)  # validate
-                return text
-            return result
-        except Exception as e:
-            last_error = e
-            logger.warning("[LLM Cascade] Groq failed: %s — trying Gemini", e)
-
+    # ── 2. Cloud model cascade (Gemini PRIMARY → Groq Secondary) ─────────────────
+    # Primary Cloud Provider: Gemini 3.6 Flash (high throughput, no rate limits)
     gemini_key = os.getenv("GEMINI_API_KEY", "")
     if gemini_key and not (_gemini_quota_exhausted and time.time() < _gemini_quota_reset_time):
         try:
-            logger.info("[LLM Cascade] Routing to Gemini (%s)", _GEMINI_MODEL)
+            logger.info("[LLM Cascade] Routing to Primary LLM: Gemini (%s)", _GEMINI_MODEL)
             result = _call_gemini(messages, response_format=response_format, temperature=temperature)
             if response_format and response_format.get("type") == "json_object":
                 text = _clean_json(result)
@@ -253,7 +240,22 @@ def generate_with_retry(
             return result
         except Exception as e:
             last_error = e
-            logger.warning("[LLM Cascade] Gemini failed: %s", e)
+            logger.warning("[LLM Cascade] Gemini primary call failed: %s — trying Groq fallback", e)
+
+    # Secondary Fallback Provider: Groq Cloud API
+    groq_key = os.getenv("GROQ_API_KEY", "")
+    if groq_key and not (_groq_quota_exhausted and time.time() < _groq_quota_reset_time):
+        try:
+            logger.info("[LLM Cascade] Routing to Secondary LLM: Groq (%s)", _GROQ_MODEL)
+            result = _call_groq(messages, response_format=response_format, temperature=temperature)
+            if response_format and response_format.get("type") == "json_object":
+                text = _clean_json(result)
+                json.loads(text)  # validate
+                return text
+            return result
+        except Exception as e:
+            last_error = e
+            logger.warning("[LLM Cascade] Groq fallback failed: %s", e)
 
     # ── 3. Local Ollama as ultimate fallback for complex tasks ───────────────────
     if not is_simple and _ollama_available():
