@@ -11,7 +11,7 @@ import ReviewQueue from './components/ReviewQueue.jsx'
 import { API } from './apiConfig'
 
 export default function App() {
-  const [tab, setActiveTab] = useState('single')
+  const [tab, setTab] = useState('single')
   const [activeStage, setActiveStage] = useState(null)
   const [result, setResult] = useState(null)
   const [showHITL, setShowHITL] = useState(false)
