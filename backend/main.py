@@ -742,15 +742,17 @@ async def enrich_batch(
     loop = asyncio.get_running_loop()
     
     for row in reader:
-        brand = (row.get("brand") or row.get("Part_Manuf") or "").strip()
-        mpn = (row.get("mpn") or row.get("Mfg_Part_Num") or "").strip()
-        desc = (row.get("description") or row.get("Part_Desc") or "").strip()
+        # Case-insensitive row getter
+        row_norm = {str(k).strip().lower(): (v or "") for k, v in row.items() if k is not None}
+        brand = (row_norm.get("brand") or row_norm.get("part_manuf") or row_norm.get("e1_brand") or row_norm.get("unilog_brand") or row_norm.get("dib_brand") or "").strip()
+        mpn = (row_norm.get("mpn") or row_norm.get("mfg_part_num") or row_norm.get("part_number") or "").strip()
+        desc = (row_norm.get("description") or row_norm.get("part_desc") or "").strip()
 
         # Capture all input CSV columns for passthrough
-        input_e1_brand = (row.get("E1_Brand") or "").strip()
-        input_unilog_brand = (row.get("Unilog_Brand") or "").strip()
-        input_dib_brand = (row.get("DIB_Brand") or "").strip()
-        input_part_manuf = (row.get("Part_Manuf") or "").strip()
+        input_e1_brand = (row_norm.get("e1_brand") or "").strip()
+        input_unilog_brand = (row_norm.get("unilog_brand") or "").strip()
+        input_dib_brand = (row_norm.get("dib_brand") or "").strip()
+        input_part_manuf = (row_norm.get("part_manuf") or "").strip()
 
         if not brand or not mpn:
             continue
