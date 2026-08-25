@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react'
-
+import { API } from '../apiConfig'
 
 /**
  * ReviewQueue — loads all needs_review jobs and displays them as cards.
@@ -12,11 +12,11 @@ export default function ReviewQueue({ onOpenJob }) {
 
   const fetchJobs = useCallback(async () => {
     try {
-      const res = await fetch('/jobs?limit=500')
+      const res = await fetch(`${API}/jobs?limit=500`)
       if (!res.ok) throw new Error(`HTTP ${res.status}`)
       const data = await res.json()
       const all = data.jobs || (Array.isArray(data) ? data : [])
-      const review = all.filter(j => j.status && j.status.startsWith('needs_review'))
+      const review = all.filter(j => j.status && (j.status.startsWith('needs_review') || j.status === 'hitl_paused'))
       setJobs(review)
       setError(null)
     } catch (e) {
@@ -34,7 +34,7 @@ export default function ReviewQueue({ onOpenJob }) {
 
   const handleOpen = async (job) => {
     try {
-      const res = await fetch(`/jobs/${job.job_id}`)
+      const res = await fetch(`${API}/jobs/${job.job_id}`)
       const full = res.ok ? await res.json() : job
       onOpenJob({ ...(full.product || full), job_id: job.job_id, pipeline_status: job.status, hitl_required: true })
     } catch {

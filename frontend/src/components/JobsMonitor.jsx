@@ -3,14 +3,17 @@ import { useState, useEffect, useCallback } from 'react'
 import { API } from '../apiConfig'
 
 const STATUS_COLORS = {
+  complete:    'conf-high',
   completed:   'conf-high',
   validated:   'conf-high',
   hitl_paused: 'conf-mid',
+  needs_review:'conf-mid',
   running:     'conf-mid',
   failed:      'conf-low',
 }
 
 const STATUS_LABELS = {
+  complete:    'Complete',
   completed:   'Complete',
   validated:   'Validated',
   hitl_paused: 'Needs Review',
@@ -47,9 +50,11 @@ export default function JobsMonitor({ onLoadJob }) {
       const res = await fetch(`${API}/jobs/${job_id}`)
       if (!res.ok) throw new Error(`HTTP ${res.status}`)
       const record = await res.json()
+      const isHITL = record.status === 'hitl_paused' || (record.status && record.status.startsWith('needs_review'))
       onLoadJob({
         ...record,
-        hitl_required: record.status === 'hitl_paused',
+        job_id,
+        hitl_required: isHITL,
         pipeline_status: record.status,
       })
     } catch (err) {
@@ -59,7 +64,7 @@ export default function JobsMonitor({ onLoadJob }) {
 
   const FILTERS = [
     { value: '',            label: 'All' },
-    { value: 'completed',   label: 'Completed' },
+    { value: 'complete',    label: 'Completed' },
     { value: 'hitl_paused', label: 'Needs Review' },
     { value: 'failed',      label: 'Failed' },
   ]
@@ -121,7 +126,7 @@ export default function JobsMonitor({ onLoadJob }) {
                   const confPct = job.overall_confidence != null ? Math.round(job.overall_confidence * 100) : 0
                   const isHigh = confPct >= 90
                   const isMid = confPct >= 70
-                  const isHITL = job.status === 'hitl_paused' || job.status === 'needs_review_identity' || job.status === 'needs_review_retrieval' || job.status === 'needs_review_attributes' || job.status === 'needs_review_delivery'
+                  const isHITL = job.status === 'hitl_paused' || (job.status && job.status.startsWith('needs_review'))
 
                   let rationale = ''
                   let rationaleClass = 'conf-high'
@@ -148,8 +153,8 @@ export default function JobsMonitor({ onLoadJob }) {
                       <td style={{ fontWeight: 600 }}>{job.brand}</td>
                       <td style={{ fontFamily: 'var(--font-mono)', color: 'var(--color-accent-1)' }}>{job.mpn}</td>
                       <td>
-                        <span className={`conf-badge ${STATUS_COLORS[job.status] || 'conf-mid'}`}>
-                          {STATUS_LABELS[job.status] || job.status}
+                        <span className={`conf-badge ${STATUS_COLORS[job.status] || (isHITL ? 'conf-mid' : 'conf-mid')}`}>
+                          {STATUS_LABELS[job.status] || (isHITL ? 'Needs Review' : job.status)}
                         </span>
                       </td>
                       <td>

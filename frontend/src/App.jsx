@@ -8,6 +8,7 @@ import JobsMonitor from './components/JobsMonitor.jsx'
 import PipelineTrace from './components/PipelineTrace.jsx'
 import UserGuideModal from './components/UserGuideModal.jsx'
 import ReviewQueue from './components/ReviewQueue.jsx'
+import { API } from './apiConfig'
 
 export default function App() {
   const [tab, setActiveTab] = useState('single')
@@ -34,8 +35,8 @@ export default function App() {
         if (jobsRes && jobsRes.ok) {
           const data = await jobsRes.json()
           const jobs = data.jobs || (Array.isArray(data) ? data : [])
-          complete = jobs.filter(j => j.status === 'complete').length
-          review   = jobs.filter(j => j.status === 'needs_review').length
+          complete = jobs.filter(j => j.status === 'complete' || j.status === 'completed').length
+          review   = jobs.filter(j => j.status && (j.status.startsWith('needs_review') || j.status === 'hitl_paused')).length
         }
         let metricsData = {}
         if (metricsRes && metricsRes.ok) metricsData = await metricsRes.json()
@@ -68,8 +69,9 @@ export default function App() {
   }
 
   const handleLoadJob = (job) => {
+    const isHITL = Boolean(job.hitl_required || (job.status && job.status.startsWith('needs_review')) || (job.pipeline_status && job.pipeline_status.startsWith('needs_review')) || job.status === 'hitl_paused')
     setResult(job)
-    setShowHITL(job.hitl_required)
+    setShowHITL(isHITL)
     setActiveStage(null)
     setTab('single')
     setTimeout(() => document.getElementById('result-card')?.scrollIntoView({ behavior: 'smooth' }), 100)
@@ -260,7 +262,7 @@ export default function App() {
                 <p>Monitor enrichment runs across your product catalog. Review paused records and export finalized data.</p>
               </div>
               <a
-                href="http://127.0.0.1:8000/export/csv"
+                href={`${API}/export/csv`}
                 className="btn btn-success"
                 style={{ textDecoration: 'none', flexShrink: 0 }}
                 download="Unilog_Submission.csv"
@@ -290,7 +292,7 @@ export default function App() {
                 <p>Products flagged for human verification. Click <strong>Open in Review</strong> to inspect and approve.</p>
               </div>
               <a
-                href="http://127.0.0.1:8000/export/csv"
+                href={`${API}/export/csv`}
                 className="btn btn-success"
                 style={{ textDecoration: 'none', flexShrink: 0 }}
                 download="Unilog_Submission.csv"

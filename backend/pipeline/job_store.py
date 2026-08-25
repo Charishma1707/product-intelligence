@@ -216,11 +216,48 @@ def seed_demo_jobs() -> None:
                         "snippet": "POWERSTATE Brushless Motor delivers up to 1200 in-lbs of peak torque..."
                     }
                 ]
+            },
+            {
+                "job_id": "demo-siemens-contactor",
+                "product_id": "demo-siemens-contactor",
+                "brand": "Siemens",
+                "mpn": "3RT2015-1BB41",
+                "description": "Siemens SIRIUS Power Contactor 3-Pole 24V DC 7A",
+                "canonical_brand": "Siemens AG",
+                "unspsc_code": "39121529",
+                "unspsc_title": "Contactors",
+                "overall_confidence": 0.68,
+                "status": "needs_review_extraction",
+                "extracted_attributes": {
+                    "Coil Voltage": "24 V DC",
+                    "Operating Current": "7 A",
+                    "Number of Poles": "3-Pole",
+                    "Auxiliary Contacts": "1 NO"
+                },
+                "specifications": {
+                    "Coil Voltage": {"value": "24 V DC", "confidence": 0.72, "source_tier": "pdf"},
+                    "Operating Current": {"value": "7 A", "confidence": 0.65, "source_tier": "pdf"},
+                    "Number of Poles": {"value": "3", "confidence": 0.95, "source_tier": "pdf"},
+                    "Auxiliary Contacts": {"value": "1 NO", "confidence": 0.60, "source_tier": "pdf"}
+                },
+                "ref_urls": [
+                    "https://support.industry.siemens.com/cs/attachments/3RT2015-1BB41_datasheet.pdf"
+                ],
+                "citations": [
+                    {
+                        "field_name": "Coil Voltage",
+                        "extracted_value": "24 V DC",
+                        "confidence": 0.72,
+                        "source_url": "https://support.industry.siemens.com/cs/attachments/3RT2015-1BB41_datasheet.pdf",
+                        "page_number": 1,
+                        "snippet": "Control supply voltage at DC rated value: 24 V"
+                    }
+                ]
             }
         ]
         for job in demo_jobs:
             save_job(job)
-        logger.info("Successfully pre-seeded 4 demo jobs for judges review.")
+        logger.info("Successfully pre-seeded demo jobs for judges review.")
     except Exception as e:
         logger.warning("Failed to pre-seed demo jobs: %s", e)
 
@@ -304,10 +341,22 @@ def list_jobs(status: str | None = None, limit: int = 50) -> list[dict]:
     try:
         with _get_conn() as conn:
             if status:
-                rows = conn.execute(
-                    "SELECT * FROM jobs WHERE status = ? ORDER BY ROWID DESC LIMIT ?",
-                    (status, limit),
-                ).fetchall()
+                s_lower = status.lower().strip()
+                if s_lower in ("complete", "completed"):
+                    rows = conn.execute(
+                        "SELECT * FROM jobs WHERE status IN ('complete', 'completed', 'validated') ORDER BY ROWID DESC LIMIT ?",
+                        (limit,),
+                    ).fetchall()
+                elif s_lower in ("hitl_paused", "needs_review", "review"):
+                    rows = conn.execute(
+                        "SELECT * FROM jobs WHERE status = 'hitl_paused' OR status LIKE 'needs_review%' ORDER BY ROWID DESC LIMIT ?",
+                        (limit,),
+                    ).fetchall()
+                else:
+                    rows = conn.execute(
+                        "SELECT * FROM jobs WHERE status = ? ORDER BY ROWID DESC LIMIT ?",
+                        (status, limit),
+                    ).fetchall()
             else:
                 rows = conn.execute(
                     "SELECT * FROM jobs ORDER BY ROWID DESC LIMIT ?",

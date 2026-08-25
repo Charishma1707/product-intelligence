@@ -48,6 +48,14 @@ app = FastAPI(
     version="2.0.0",
 )
 
+@app.get("/")
+async def root():
+    return {"status": "ok", "app": "Product Intelligence Pipeline", "version": "2.0.0"}
+
+@app.get("/health")
+async def health_check():
+    return {"status": "healthy", "timestamp": datetime.now(timezone.utc).isoformat()}
+
 @app.exception_handler(Exception)
 async def global_exception_handler(request: Request, exc: Exception):
     logger.error("Global unhandled exception: %s", exc)
@@ -469,12 +477,12 @@ async def get_jobs(status: Optional[str] = None, limit: int = 50):
     ]
     try:
         jobs_data = list_jobs(status=status, limit=limit)
-        if not jobs_data:
+        if not jobs_data and status is None:
             jobs_data = demo_fallback
         return {"jobs": jobs_data}
     except Exception as e:
         logger.error(f"Error listing jobs: {e}")
-        return {"jobs": demo_fallback}
+        return {"jobs": demo_fallback if status is None else []}
 
 
 @app.get("/jobs/{job_id}", tags=["LangGraph v2"])
