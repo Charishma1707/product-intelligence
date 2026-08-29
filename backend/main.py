@@ -425,6 +425,84 @@ async def get_metrics():
         }
 
 
+# ---------------------------------------------------------------------------
+# AI Evaluation Endpoints
+# ---------------------------------------------------------------------------
+
+@app.post("/evaluate/{job_id}", tags=["AI Evaluation"])
+async def evaluate_job(job_id: str):
+    """
+    Run a full AI evaluation on a completed enrichment job.
+    Returns an EvaluationReport with scores across 5 dimensions:
+    completeness, citation quality, hallucination risk, consistency, description quality.
+    """
+    state = load_job(job_id)
+    if not state:
+        # Try demo jobs
+        demo_state = None
+        if "fluke" in job_id.lower():
+            demo_state = {
+                "job_id": job_id, "brand": "Fluke", "mpn": "FLUKE-117",
+                "category": "Digital Multimeters", "status": "complete",
+                "short_desc": "Fluke 117 Electrician's True-RMS Multimeter",
+                "long_desc": "The Fluke 117 True-RMS digital multimeter is built for electricians who need to work in high-noise environments. It features non-contact voltage detection and AutoVolt automatic AC/DC voltage selection.",
+                "specifications": {
+                    "Voltage Rating": {"value": "600 V AC / DC", "url": "https://fluke.com", "snippet": "600 V CAT III"},
+                    "Safety Rating": {"value": "CAT III 600 V", "url": "https://fluke.com", "snippet": "CAT III 600 V safety rated"},
+                    "Display": {"value": "6000-count LCD", "url": "https://fluke.com", "snippet": "6000-count LCD display"},
+                },
+                "item_features": ["Non-contact voltage detection", "AutoVolt", "LoZ mode"],
+                "manufacturer_name": "Fluke Corporation",
+                "unspsc": "41112414",
+                "country_of_origin": "USA",
+                "expected_fields": ["Voltage Rating", "Safety Rating", "Display", "warranty", "weight"],
+            }
+        if not demo_state:
+            raise HTTPException(status_code=404, detail=f"Job {job_id} not found.")
+        state = demo_state
+
+    loop = asyncio.get_running_loop()
+    try:
+        from pipeline.evaluator import evaluate_product
+        report = await loop.run_in_executor(None, evaluate_product, state)
+        return report
+    except Exception as e:
+        logger.exception("Evaluation failed for job %s", job_id)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/evaluate/batch", tags=["AI Evaluation"])
+async def evaluate_batch(limit: int = 20):
+    """
+    Run AI evaluation on up to `limit` completed jobs and return summary scores.
+    """
+    from pipeline.evaluator import evaluate_product
+    summary_jobs = list_jobs(status="complete", limit=limit)
+    if not summary_jobs:
+        return {"evaluations": [], "total": 0}
+
+    loop = asyncio.get_running_loop()
+    results = []
+    for job_summary in summary_jobs[:limit]:
+        state = load_job(job_summary["job_id"])
+        if not state:
+            continue
+        try:
+            report = await loop.run_in_executor(None, evaluate_product, state)
+            results.append({
+                "job_id": report["job_id"],
+                "brand": report["brand"],
+                "mpn": report["mpn"],
+                "overall_score": report["overall_score"],
+                "grade": report["grade"],
+                "evaluated_at": report["evaluated_at"],
+            })
+        except Exception as e:
+            logger.warning("Batch evaluation failed for %s: %s", job_summary["job_id"], e)
+
+    return {"evaluations": results, "total": len(results)}
+
+
 @app.get("/test-jobs")
 async def test_jobs():
     try:

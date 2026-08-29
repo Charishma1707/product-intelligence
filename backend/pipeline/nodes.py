@@ -189,6 +189,23 @@ def node_retrieve(state: PipelineState) -> dict:
         cache_hit = bool(chunks) and not any(c.get("source_type") == "fresh_scrape" for c in chunks)
         retrieve_mode = "CACHE HIT (ChromaDB) – skipped web scrape" if cache_hit else "FRESH scrape via web search"
 
+        # CRAG metadata summary
+        crag_grades_summary = None
+        crag_corrective = False
+        if chunks and any("crag_grade" in c for c in chunks):
+            relevant_ct = sum(1 for c in chunks if c.get("crag_grade") == "relevant")
+            ambiguous_ct = sum(1 for c in chunks if c.get("crag_grade") == "ambiguous")
+            irrelevant_ct = sum(1 for c in chunks if c.get("crag_grade") == "irrelevant")
+            avg_sc = sum(c.get("crag_score", 0.5) for c in chunks) / len(chunks)
+            crag_corrective = any(c.get("crag_corrective") for c in chunks)
+            crag_grades_summary = {
+                "relevant": relevant_ct,
+                "ambiguous": ambiguous_ct,
+                "irrelevant": irrelevant_ct,
+                "avg_score": round(avg_sc, 3),
+                "corrective_triggered": crag_corrective,
+            }
+
         url_lines = []
         if mfr_url:
             url_lines.append(f"  MFR Page     : {mfr_url}")
@@ -209,15 +226,29 @@ def node_retrieve(state: PipelineState) -> dict:
         if not url_lines:
             url_lines.append("  (no URLs resolved)")
 
+        crag_line = ""
+        if crag_grades_summary:
+            crag_line = (
+                f"\n  [CRAG] Relevant: {crag_grades_summary['relevant']} | "
+                f"Ambiguous: {crag_grades_summary['ambiguous']} | "
+                f"Irrelevant: {crag_grades_summary['irrelevant']} | "
+                f"AvgScore: {crag_grades_summary['avg_score']:.2f}"
+                + (" | ⚡ Corrective Search Triggered" if crag_corrective else "")
+            )
+
         log_msg = (
             f"[Retrieve] {retrieve_mode}\n"
-            f"  Chunks: {len(chunks)} | MPN Verified: {'YES' if mpn_verified else 'NO'}\n"
+            f"  Chunks: {len(chunks)} | MPN Verified: {'YES' if mpn_verified else 'NO'}"
+            + crag_line + "\n"
             + "\n".join(url_lines)
         )
         logger.info(log_msg)
 
+        relevant_context = result.get("relevant_context") or chunks
+
         return {
             "raw_documents": chunks,
+            "relevant_context": relevant_context,
             "mfr_url": mfr_url,
             "ref_urls": ref_urls,
             "source_urls": source_urls,
@@ -231,10 +262,14 @@ def node_retrieve(state: PipelineState) -> dict:
             "warranty_url": result.get("warranty_url"),
             "catalog_url": result.get("catalog_url"),
             "energy_guide_url": result.get("energy_guide_url"),
+            "crag_grades": crag_grades_summary,
+            "crag_corrective_triggered": crag_corrective,
             "logs": logs + [{
                 "timestamp": datetime.now(timezone.utc).isoformat(),
                 "node": "retrieve",
                 "message": log_msg,
+                "crag_grades": crag_grades_summary,
+                "relevant_context_count": len(relevant_context),
             }]
         }
     except Exception as e:
@@ -259,13 +294,30 @@ def node_extract(state: PipelineState) -> dict:
                 len(expected), len(state.get("expected_fields", [])))
     logs = state.get("logs", [])
     try:
+        # Prefer CRAG-filtered relevant_context over raw_documents.
+        # relevant_context contains only the top-k ranked sub-chunks distilled
+        # from the full retrieval set — this dramatically reduces hallucination
+        # by feeding the extractor only the most on-topic passages.
+        docs_for_extraction = (
+            state.get("relevant_context")
+            or state.get("raw_documents", [])
+        )
+        context_source = (
+            "CRAG relevant_context" if state.get("relevant_context")
+            else "raw_documents (no CRAG context)"
+        )
+        logger.info(
+            "[Node] Extract using %s (%d docs)",
+            context_source, len(docs_for_extraction)
+        )
+
         extracted = extract(
             state["brand"],
             state["mpn"],
             state["description"],
             state["category"],
             expected,
-            state.get("raw_documents", []),
+            docs_for_extraction,
             subcategory=state.get("subcategory") or "",
         )
         graph_used = any(
@@ -279,6 +331,7 @@ def node_extract(state: PipelineState) -> dict:
         msg = (
             f"Extracted {len(extracted)} fields total "
             f"({bonus_count} bonus) | "
+            f"Context: {context_source} ({len(docs_for_extraction)} docs) | "
             f"Series: {'✓ ' + str(series_val.value) if series_found else '✗ not found'}"
         )
         if graph_used:

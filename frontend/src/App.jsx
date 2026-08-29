@@ -8,7 +8,9 @@ import JobsMonitor from './components/JobsMonitor.jsx'
 import PipelineTrace from './components/PipelineTrace.jsx'
 import UserGuideModal from './components/UserGuideModal.jsx'
 import ReviewQueue from './components/ReviewQueue.jsx'
+import AIEvaluation from './components/AIEvaluation.jsx'
 import { API } from './apiConfig'
+// v2.0.2 - AI Evaluation + Corrective RAG
 
 export default function App() {
   const [tab, setTab] = useState('single')
@@ -97,6 +99,7 @@ export default function App() {
     { id: 'batch',     label: 'Batch Processing' },
     { id: 'jobs',      label: 'Jobs Monitor' },
     { id: 'dashboard', label: 'Review Dashboard' },
+    { id: 'evaluate',  label: '✦ AI Evaluation' },
   ]
 
   return (
@@ -326,6 +329,13 @@ export default function App() {
 
             {/* Review Queue — lists all needs_review jobs */}
             <ReviewQueue onOpenJob={(job) => { handleLoadJob(job); setTab('single') }} />
+          </div>
+        )}
+
+        {/* ══════════ AI EVALUATION ══════════ */}
+        {tab === 'evaluate' && (
+          <div className="animate-fade-up">
+            <AIEvaluation />
           </div>
         )}
       </main>

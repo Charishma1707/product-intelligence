@@ -722,6 +722,331 @@ def _update_knowledge_graph(brand: str, mpn: str, category: str):
     ingest_validated_product(brand, mpn, category, {})
 
 
+# ---------------------------------------------------------------------------
+# CORRECTIVE RAG — Chunk relevance grading + corrective search
+# ---------------------------------------------------------------------------
+
+def _grade_chunks(chunks: list[dict], brand: str, mpn: str, description: str, category: str) -> list[dict]:
+    """
+    CRAG Step 1: Use the LLM to grade each retrieved chunk's relevance.
+    Adds a 'crag_grade' key to each chunk: 'relevant' | 'ambiguous' | 'irrelevant'
+    and a 'crag_score' float 0.0–1.0.
+
+    To save tokens, we batch all chunk summaries into a single LLM call.
+    """
+    if not chunks:
+        return chunks
+
+    # Build a compact representation of each chunk for the LLM
+    chunk_summaries = []
+    for i, c in enumerate(chunks):
+        text = (c.get("text") or "")[:300].strip()
+        url = c.get("url") or ""
+        chunk_summaries.append(f"[{i}] URL: {url}\nText: {text}")
+
+    prompt = (
+        f"You are a retrieval quality grader for a product data pipeline.\n"
+        f"Target product: {brand} {mpn} ({category})\n"
+        f"Description: {description or 'N/A'}\n\n"
+        f"Below are {len(chunks)} retrieved document chunks.\n"
+        f"For EACH chunk, assign:\n"
+        f"  - grade: 'relevant' (clearly about this product/category), "
+        f"'ambiguous' (partial match), or 'irrelevant' (wrong product or off-topic)\n"
+        f"  - score: float 0.0-1.0 (1.0 = perfectly relevant)\n\n"
+        + "\n\n".join(chunk_summaries)
+        + "\n\nRespond ONLY with a JSON array of objects, one per chunk, in order:\n"
+        '[{"index": 0, "grade": "relevant", "score": 0.9}, ...]'
+    )
+    try:
+        raw = generate_with_retry(
+            messages=[
+                {"role": "system", "content": "You output only valid JSON. No markdown."},
+                {"role": "user", "content": prompt},
+            ],
+            response_format={"type": "json_object"},
+            temperature=0.0,
+        )
+        # The model may return {"grades": [...]} or a raw array wrapped in an object
+        parsed = parse_json_response(raw)
+        if isinstance(parsed, list):
+            grades = parsed
+        elif isinstance(parsed, dict):
+            # unwrap common wrapper keys
+            grades = parsed.get("grades") or parsed.get("chunks") or parsed.get("results") or []
+        else:
+            grades = []
+
+        grade_map = {g["index"]: g for g in grades if "index" in g}
+        for i, chunk in enumerate(chunks):
+            g = grade_map.get(i, {})
+            chunk["crag_grade"] = g.get("grade", "ambiguous")
+            chunk["crag_score"] = float(g.get("score", 0.5))
+
+        relevant_count = sum(1 for c in chunks if c.get("crag_grade") == "relevant")
+        logger.info(
+            "[CRAG] Graded %d chunks — %d relevant, %d ambiguous, %d irrelevant",
+            len(chunks),
+            relevant_count,
+            sum(1 for c in chunks if c.get("crag_grade") == "ambiguous"),
+            sum(1 for c in chunks if c.get("crag_grade") == "irrelevant"),
+        )
+    except Exception as e:
+        logger.warning("[CRAG] Grading LLM call failed: %s — treating all chunks as ambiguous", e)
+        for chunk in chunks:
+            chunk.setdefault("crag_grade", "ambiguous")
+            chunk.setdefault("crag_score", 0.5)
+
+    return chunks
+
+
+def _corrective_search(
+    brand: str, mpn: str, description: str, category: str, max_results: int = 5
+) -> list[dict]:
+    """
+    CRAG Step 2: Triggered when initial retrieval quality is low.
+    Runs a more targeted web search to fetch higher-quality replacement chunks.
+    Returns a list of freshly-fetched chunks tagged with crag_corrective=True.
+    """
+    logger.info("[CRAG] Triggering corrective search for %s %s", brand, mpn)
+    import json as _json
+    serper_raw = os.getenv("SERPER_API_KEY")
+    serper_api_key = serper_raw.strip() if serper_raw else None
+
+    # Build highly specific queries to find authoritative specs
+    queries = [
+        f'"{mpn}" "{brand}" specifications datasheet',
+        f'"{mpn}" technical specifications site:grainger.com OR site:mscdirect.com OR site:mcmaster.com',
+        f'"{brand}" "{mpn}" product data filetype:pdf',
+    ]
+
+    corrective_urls: list[str] = []
+    for q in queries:
+        if len(corrective_urls) >= max_results:
+            break
+        try:
+            if serper_api_key:
+                headers = {"X-API-KEY": serper_api_key, "Content-Type": "application/json"}
+                payload = _json.dumps({"q": q, "num": 4})
+                resp = requests.post(
+                    "https://google.serper.dev/search",
+                    headers=headers, data=payload, timeout=10
+                )
+                resp.raise_for_status()
+                for item in resp.json().get("organic", []):
+                    url = item.get("link", "")
+                    if url and not is_ecommerce(url) and url not in corrective_urls:
+                        corrective_urls.append(url)
+            else:
+                from duckduckgo_search import DDGS
+                with DDGS() as ddgs:
+                    for r in ddgs.text(q, max_results=4):
+                        url = r.get("href") or r.get("link", "")
+                        if url and not is_ecommerce(url) and url not in corrective_urls:
+                            corrective_urls.append(url)
+        except Exception as e:
+            logger.warning("[CRAG] Corrective search query failed: %s — %s", q, e)
+
+    logger.info("[CRAG] Corrective search found %d candidate URLs", len(corrective_urls))
+
+    corrective_chunks: list[dict] = []
+    for url in corrective_urls[:max_results]:
+        try:
+            fetched = _fetch_url(url, brand)
+            for c in fetched:
+                if len(c.get("text", "").strip()) >= 50:
+                    c["crag_grade"] = "relevant"  # assume corrective results are relevant
+                    c["crag_score"] = 0.75
+                    c["crag_corrective"] = True
+                    corrective_chunks.append(c)
+        except Exception as e:
+            logger.warning("[CRAG] Failed to fetch corrective URL %s: %s", url, e)
+
+    logger.info("[CRAG] Corrective search yielded %d chunks", len(corrective_chunks))
+    return corrective_chunks
+
+
+# ---------------------------------------------------------------------------
+# CRAG Step 3 — Split relevant chunks into fine-grained sub-chunks
+# ---------------------------------------------------------------------------
+
+def _split_relevant_chunks(
+    chunks: list[dict],
+    max_chars: int = 600,
+    overlap: int = 80,
+) -> list[dict]:
+    """
+    CRAG Step 3a: Split each 'relevant' or 'ambiguous' chunk into smaller
+    overlapping sub-chunks so that retrieval is more precise.
+
+    Strategy:
+      - First split by double-newline (paragraph boundaries).
+      - If any paragraph is still > max_chars, split further by sentence
+        boundary ('. ' or '\\n').
+      - Each sub-chunk inherits all metadata from its parent chunk.
+      - 'irrelevant' chunks are dropped entirely.
+
+    Returns a flat list of sub-chunk dicts.
+    """
+    sub_chunks: list[dict] = []
+
+    for chunk in chunks:
+        grade = chunk.get("crag_grade", "ambiguous")
+        if grade == "irrelevant":
+            logger.debug("[CRAG] Dropping irrelevant chunk from %s", chunk.get("url", ""))
+            continue
+
+        text = (chunk.get("text") or "").strip()
+        if not text:
+            sub_chunks.append(chunk)
+            continue
+
+        # ── Paragraph split ──
+        paragraphs = [p.strip() for p in text.split("\n\n") if p.strip()]
+        fine_pieces: list[str] = []
+
+        for para in paragraphs:
+            if len(para) <= max_chars:
+                fine_pieces.append(para)
+            else:
+                # Sentence split fallback
+                import re as _re
+                sentences = _re.split(r"(?<=[.!?])\s+|\n", para)
+                buf = ""
+                for sent in sentences:
+                    sent = sent.strip()
+                    if not sent:
+                        continue
+                    if len(buf) + len(sent) + 1 <= max_chars:
+                        buf = (buf + " " + sent).strip()
+                    else:
+                        if buf:
+                            fine_pieces.append(buf)
+                        buf = sent
+                if buf:
+                    fine_pieces.append(buf)
+
+        # Apply sliding overlap: carry last `overlap` chars into next piece
+        for j, piece in enumerate(fine_pieces):
+            if j > 0 and overlap > 0:
+                prev_tail = fine_pieces[j - 1][-overlap:]
+                piece = prev_tail + " " + piece
+
+            sub_chunk = dict(chunk)  # shallow copy — inherits all metadata
+            sub_chunk["text"] = piece.strip()
+            sub_chunk["crag_sub_index"] = j
+            sub_chunk["crag_parent_grade"] = grade
+            sub_chunks.append(sub_chunk)
+
+    logger.info(
+        "[CRAG] Split %d graded chunks → %d sub-chunks (irrelevant dropped)",
+        len(chunks), len(sub_chunks)
+    )
+    return sub_chunks
+
+
+# ---------------------------------------------------------------------------
+# CRAG Step 3b — Retrieve the most relevant sub-chunks for the query
+# ---------------------------------------------------------------------------
+
+def _retrieve_relevant_context(
+    sub_chunks: list[dict],
+    brand: str,
+    mpn: str,
+    description: str,
+    category: str,
+    top_k: int = 12,
+) -> list[dict]:
+    """
+    CRAG Step 3b: Score every sub-chunk against the product query using a
+    lightweight keyword-overlap ranking (no external embedding needed, zero cost).
+
+    Scoring factors:
+      1. MPN exact match in text (+3.0 — strongest signal)
+      2. Brand mention (+1.0)
+      3. Category keyword overlap (+0.5 per keyword)
+      4. Description keyword overlap (+0.2 per keyword, capped at 3)
+      5. CRAG grade bonus: relevant=+1.0, ambiguous=+0.0
+      6. Source tier bonus: tier-1 MFR exact = +0.5, tier-2 = +0.25
+
+    Returns the top_k sub-chunks sorted by score (highest first).
+    """
+    import re as _re
+
+    def _tokenize(s: str) -> set[str]:
+        return set(_re.findall(r"[a-z0-9]{2,}", s.lower()))
+
+    query_tokens = _tokenize(f"{brand} {mpn} {description} {category}")
+    cat_tokens   = _tokenize(category)
+    desc_tokens  = _tokenize(description)
+
+    mpn_clean    = _re.sub(r"[^a-z0-9]", "", mpn.lower())
+    brand_lower  = brand.lower()
+
+    scored: list[tuple[float, dict]] = []
+
+    for sc in sub_chunks:
+        text = (sc.get("text") or "").strip()
+        if len(text) < 20:
+            continue  # skip noise
+
+        text_lower  = text.lower()
+        text_clean  = _re.sub(r"[^a-z0-9 ]", " ", text_lower)
+        text_tokens = _tokenize(text)
+
+        score = 0.0
+
+        # 1. MPN match (most important)
+        text_nopunct = _re.sub(r"[^a-z0-9]", "", text_lower)
+        if mpn_clean and mpn_clean in text_nopunct:
+            score += 3.0
+        elif mpn.lower() in text_lower:
+            score += 2.5
+
+        # 2. Brand mention
+        if brand_lower and brand_lower in text_lower:
+            score += 1.0
+
+        # 3. Category keyword overlap
+        cat_overlap = len(cat_tokens & text_tokens)
+        score += cat_overlap * 0.5
+
+        # 4. Description keyword overlap (capped at 3 keywords)
+        desc_overlap = len(desc_tokens & text_tokens)
+        score += min(desc_overlap, 3) * 0.2
+
+        # 5. CRAG grade bonus
+        grade = sc.get("crag_parent_grade") or sc.get("crag_grade", "ambiguous")
+        if grade == "relevant":
+            score += 1.0
+
+        # 6. Source tier bonus (lower tier = more authoritative)
+        tier = sc.get("source_tier", 5)
+        if tier == 1:
+            score += 0.5
+        elif tier == 2:
+            score += 0.25
+
+        scored.append((score, sc))
+
+    # Sort descending by score, break ties by source_tier ascending
+    scored.sort(key=lambda t: (-t[0], t[1].get("source_tier", 5)))
+
+    top = [sc for _, sc in scored[:top_k]]
+
+    if scored:
+        logger.info(
+            "[CRAG] Ranked %d sub-chunks → kept top %d "
+            "(best_score=%.2f, worst_kept=%.2f)",
+            len(scored), len(top),
+            scored[0][0],
+            scored[min(len(top) - 1, len(scored) - 1)][0],
+        )
+    else:
+        logger.info("[CRAG] No scoreable sub-chunks found.")
+
+    return top
+
+
 def retrieve(brand: str, mpn: str, description: str, category: str) -> dict:
     """
     Stage 2: Retrieve and extract chunks about the product.
@@ -994,17 +1319,66 @@ def retrieve(brand: str, mpn: str, description: str, category: str) -> dict:
             except Exception as e:
                 logger.warning("[Retriever] Failed to fetch %s: %s", url, e)
 
-    # 4. Fallback to local if no chunks
+    # 4. CORRECTIVE RAG — Full pipeline: Grade → Correct → Split → Rank
+    relevant_context: list[dict] = []  # The final distilled context passed to extraction
+
+    if chunks and not offline:
+        # Step 4a: Grade initial chunks
+        chunks = _grade_chunks(chunks, brand, mpn, description, category)
+        relevant_count = sum(1 for c in chunks if c.get("crag_grade") == "relevant")
+        avg_score = sum(c.get("crag_score", 0.5) for c in chunks) / len(chunks)
+        logger.info(
+            "[CRAG] Quality check — relevant=%d/%d, avg_score=%.2f",
+            relevant_count, len(chunks), avg_score
+        )
+
+        # Step 4b: Corrective search if quality is poor
+        if relevant_count < 2 or avg_score < 0.45:
+            logger.info("[CRAG] Quality below threshold — initiating corrective web search")
+            corrective_chunks = _corrective_search(brand, mpn, description, category)
+            if corrective_chunks:
+                good_original = [c for c in chunks if c.get("crag_grade") != "irrelevant"]
+                chunks = good_original + corrective_chunks
+                logger.info(
+                    "[CRAG] Merged — kept %d original + %d corrective chunks",
+                    len(good_original), len(corrective_chunks)
+                )
+        else:
+            logger.info("[CRAG] Quality is acceptable — no corrective search needed")
+
+        # Step 4c: Split relevant/ambiguous chunks into fine-grained sub-chunks
+        sub_chunks = _split_relevant_chunks(chunks, max_chars=600, overlap=80)
+
+        # Step 4d: Rank sub-chunks by relevance → top-k relevant context
+        relevant_context = _retrieve_relevant_context(
+            sub_chunks,
+            brand=brand,
+            mpn=mpn,
+            description=description,
+            category=category,
+            top_k=12,
+        )
+        logger.info(
+            "[CRAG] Final relevant_context: %d focused sub-chunks ready for extraction",
+            len(relevant_context)
+        )
+    else:
+        # Offline or no chunks — skip CRAG, pass raw chunks as context
+        relevant_context = chunks
+
+    # 5. Fallback to local if no chunks
     if not chunks:
         logger.info("[Retriever] No chunks from web (or offline). Trying local fallback.")
         chunks = _fallback_local(brand, mpn)
+        relevant_context = chunks  # no CRAG for local fallback
 
-    # 5. Save to Chroma
+    # 6. Save to Chroma (original raw chunks, not sub-chunks)
     if chunks:
         _store_chunks(product_id, chunks)
 
     return {
-        "chunks": chunks,
+        "chunks": chunks,                      # raw full chunks (for Chroma/cache)
+        "relevant_context": relevant_context,  # CRAG-distilled top-k sub-chunks for extraction
         "mfr_url": mfr_url,
         "ref_urls": ref_urls,
         "mpn_verified": any(c.get("mpn_verified", False) for c in chunks),
@@ -1018,6 +1392,7 @@ def retrieve(brand: str, mpn: str, description: str, category: str) -> dict:
         "energy_guide_url": energy_guide_url,
         "alternate_image_urls": alternate_image_urls,
     }
+
 
 
 if __name__ == "__main__":

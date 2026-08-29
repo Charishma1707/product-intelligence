@@ -1379,3 +1379,14 @@ input[type="checkbox"] {
 .batch-dropzone-icon { font-size: 40px; margin-bottom: 12px; opacity: 0.7; }
 .batch-dropzone-text { font-size: 1rem; font-weight: 700; color: var(--text-primary); margin-bottom: 4px; }
 .batch-dropzone-hint { font-size: 0.8rem; color: var(--text-muted); }
+
+/* ── Spinner animation (used by AI Evaluation loading state) ── */
+@keyframes spin {
+  from { transform: rotate(0deg); }
+  to   { transform: rotate(360deg); }
+}
+
+/* ── AI Evaluation tab glow ── */
+.nav-tab[data-tab="evaluate"] {
+  background: linear-gradient(135deg, rgba(99,102,241,0.15), rgba(139,92,246,0.15));
+}

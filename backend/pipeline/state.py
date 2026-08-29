@@ -39,7 +39,8 @@ class PipelineState(TypedDict, total=False):
     series_found_in_cache: bool
     
     # Node 2: Retrieve
-    raw_documents: list[dict]  # list of chunks
+    raw_documents: list[dict]       # list of raw full chunks (cached in ChromaDB)
+    relevant_context: list[dict]    # CRAG-distilled top-k ranked sub-chunks (used by extractor)
     source_urls: list[str]     # all non-ecommerce URLs used (legacy compat)
     mfr_url: str | None        # manufacturer's own product page URL
     ref_urls: list[str]        # approved distributor/datasheet ref URLs (non-ecommerce)
@@ -52,6 +53,9 @@ class PipelineState(TypedDict, total=False):
     warranty_url: str | None         # warranty document URL from manufacturer
     catalog_url: str | None          # catalog URL from manufacturer
     energy_guide_url: str | None     # energy guide URL from manufacturer
+    # CRAG — Corrective RAG metadata
+    crag_grades: dict | None         # summary: {relevant, ambiguous, irrelevant, avg_score}
+    crag_corrective_triggered: bool  # True if corrective web search was run
 
     # Node 3: Extract
     extracted_fields: dict[str, Any]  # ExtractedField dicts
